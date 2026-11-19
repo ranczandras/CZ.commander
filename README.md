@@ -10,9 +10,11 @@ A native macOS dual-pane file manager for Apple Silicon, inspired by the classic
 
 ## Download
 
-Get the latest **CZ.commander.app** from [Releases](https://github.com/ranczandras/CZ.commander/releases/latest): unzip it and move it to `/Applications`. The app is not notarized by Apple, so the first launch is blocked; open it once, then choose **System Settings → Privacy & Security → Open Anyway**.
+### [⬇ Download CZ.commander (latest)](https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip)
 
-CZ.commander checks GitHub for a newer release at launch (at most every 12 hours; can be turned off in Settings) and offers the download. **CZ.commander → Check for Updates…** checks right away.
+Unzip it and move **CZ.commander.app** to `/Applications`. (The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.) The app is not notarized by Apple, so the first launch is blocked; open it once, then choose **System Settings → Privacy & Security → Open Anyway**.
+
+CZ.commander checks GitHub for a newer release at every launch and every 6 hours (can be turned off in Settings) and offers **Install & Restart**: it downloads the update, verifies it is signed by the same certificate, replaces the app and relaunches. **CZ.commander → Check for Updates…** checks right away.
 
 Requires macOS 14 or later on Apple Silicon.
 
@@ -61,7 +63,7 @@ Resizes the main window to each width, saves `snapshot_<width>.png` and quits.
 ./release.sh 1.1.0 "What changed"
 ```
 
-Bumps `VERSION`, builds and signs the app, tags `v1.1.0`, pushes and creates the GitHub release with the zipped app.
+Bumps `VERSION`, builds and signs the app, tags `v1.1.0`, pushes, creates the GitHub release with `CZ.commander.zip` and deletes older releases. The locally installed app is left alone so it can update itself.
 
 ### Settings
 
@@ -80,8 +82,9 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
   - Tab menu: rename, duplicate, open in other panel, relock to current folder, close other / unlocked / duplicate tabs.
 - Drive bar with every mounted volume and free space, plus quick folders (`~`, Desktop, Downloads, Documents, Applications, `/`, Trash). Adapts to the panel width.
 - Two view modes: **Full** (name, extension, size, date) and **Thumbnails**; the **View** toolbar button switches between them.
-- **Hidden** toolbar button (`Cmd+H`) shows or hides hidden files.
-- Directory hotlist and history, Quick View (`Cmd+Y`), separate folder tree (`Cmd+F8`).
+- **Hidden** toolbar button (`Cmd+H`) shows or hides hidden files; it turns orange while hidden files are shown.
+- Built for speed: no animations; cursor moves and selection update the list directly without re-rendering the rest of the window (well under 1 ms per step).
+- Directory hotlist and history, Quick View (`Cmd+Y`).
 
 ### Mouse and keyboard
 - Total Commander's Ctrl shortcuts use Cmd (Ctrl still works): `Cmd+M` Multi-Rename, `Cmd+T` / `Cmd+W` tabs, `Cmd+U` swap panels, `Cmd+H` hidden files, `Cmd+S` quick filter, `Cmd+A` select all, `Cmd+F3`…`Cmd+F6` sort. macOS keeps `Cmd+Q` (quit), `Cmd+F` (find), `Cmd+Tab` and `Cmd+Space`, so Quick View is `Cmd+Y`, FTP is `Cmd+Shift+F`, tab switching stays `Ctrl+Tab`.

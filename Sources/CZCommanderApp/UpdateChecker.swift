@@ -45,12 +45,19 @@ final class UpdateChecker: ObservableObject {
         return true
     }
 
-    /// At launch: at most once every 12 hours, and only when enabled.
+    private var periodicTimer: Timer?
+
+    /// Checks at every launch and then every 6 hours while the app runs (when enabled).
     func checkAtLaunchIfDue() {
         guard checksAutomatically else { return }
-        let last = defaults.double(forKey: lastCheckKey)
-        guard Date().timeIntervalSince1970 - last > 12 * 3600 else { return }
         Task { await check(userInitiated: false) }
+        periodicTimer?.invalidate()
+        periodicTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in
+            Task { @MainActor in
+                guard UpdateChecker.shared.checksAutomatically else { return }
+                await UpdateChecker.shared.check(userInitiated: false)
+            }
+        }
     }
 
     func check(userInitiated: Bool) async {

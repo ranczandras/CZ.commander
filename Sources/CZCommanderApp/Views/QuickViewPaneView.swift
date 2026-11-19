@@ -38,13 +38,15 @@ public struct QuickViewPaneView: View {
             .padding(.vertical, 5)
             .background(palette.activeHeaderBackground.swiftUIColor)
 
-            if let item = focusedItem {
-                quickContent(for: item)
-            } else {
-                Spacer()
-                Text("No item focused")
-                    .foregroundColor(palette.inactiveHeaderText.swiftUIColor)
-                Spacer()
+            CursorObserving(viewModel.activePanel.cursorSignal) {
+                if let item = focusedItem {
+                    quickContent(for: item)
+                } else {
+                    Spacer()
+                    Text("No item focused")
+                        .foregroundColor(palette.inactiveHeaderText.swiftUIColor)
+                    Spacer()
+                }
             }
         }
         .background(palette.panelBackground.swiftUIColor)
@@ -161,123 +163,5 @@ public struct QuickViewPaneView: View {
                     .textSelection(.enabled)
             }
         }
-    }
-}
-
-// MARK: - Separate Directory Tree Sidebar (Cmd+F8)
-
-public struct DirectoryTreeSidebarView: View {
-    @ObservedObject var viewModel: CommanderViewModel
-    @State private var expandedPaths: Set<String> = ["/", "/Volumes"]
-
-    private var palette: CommanderThemePalette { viewModel.themePalette }
-
-    public init(viewModel: CommanderViewModel) {
-        self.viewModel = viewModel
-    }
-
-    public var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "sidebar.left")
-                    .foregroundColor(palette.activeHeaderText.swiftUIColor)
-                Text("Directory Tree (Cmd+F8)")
-                    .font(.system(size: 11.5, weight: .bold))
-                    .foregroundColor(palette.activeHeaderText.swiftUIColor)
-                Spacer()
-                Button {
-                    viewModel.showDirectoryTreeSidebar = false
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(palette.activeHeaderText.swiftUIColor)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(palette.activeHeaderBackground.swiftUIColor)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(viewModel.mountedVolumes) { vol in
-                        treeNodeView(title: vol.name, path: vol.path, depth: 0)
-                    }
-                    Divider().padding(.vertical, 4)
-                    let activeParent = (viewModel.activePanel.currentPath as NSString).deletingLastPathComponent
-                    if activeParent != "/" && !activeParent.isEmpty {
-                        treeNodeView(
-                            title: (activeParent as NSString).lastPathComponent,
-                            path: activeParent,
-                            depth: 0
-                        )
-                    }
-                }
-                .padding(6)
-            }
-        }
-        .frame(width: 220)
-        .background(palette.panelBackground.swiftUIColor)
-        .overlay(
-            Rectangle()
-                .fill(palette.dividerColor.swiftUIColor)
-                .frame(width: 1),
-            alignment: .trailing
-        )
-    }
-
-    private func treeNodeView(title: String, path: String, depth: Int) -> AnyView {
-        let isExpanded = expandedPaths.contains(path)
-        let isCurrent = viewModel.activePanel.currentPath == path
-        let subdirs: [FileItem] = isExpanded
-            ? ((try? FileSystemEngine.listDirectory(at: path, showHidden: false, includeParentEntry: false))?.filter { $0.isDirectory } ?? [])
-            : []
-
-        return AnyView(
-            VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Button {
-                        if isExpanded {
-                            expandedPaths.remove(path)
-                        } else {
-                            expandedPaths.insert(path)
-                        }
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(palette.inactiveHeaderText.swiftUIColor)
-                            .frame(width: 12)
-                    }
-                    .buttonStyle(.plain)
-
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(palette.directoryText.swiftUIColor)
-
-                    Text(title)
-                        .font(.system(size: 11.5, weight: isCurrent ? .bold : .regular, design: .monospaced))
-                        .foregroundColor(isCurrent ? palette.cursorText.swiftUIColor : palette.regularFileText.swiftUIColor)
-                        .lineLimit(1)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, CGFloat(depth * 12))
-                .padding(.vertical, 3)
-                .padding(.horizontal, 4)
-                .background(isCurrent ? palette.cursorBackground.swiftUIColor : Color.clear)
-                
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    viewModel.activePanel.navigateTo(path: path)
-                    expandedPaths.insert(path)
-                }
-
-                if isExpanded && depth < 4 {
-                    ForEach(subdirs.prefix(60)) { sub in
-                        treeNodeView(title: sub.name, path: sub.fullPath, depth: depth + 1)
-                    }
-                }
-            }
-        )
     }
 }

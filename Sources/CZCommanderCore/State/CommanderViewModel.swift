@@ -235,6 +235,27 @@ public struct TransferJob: Identifiable, Sendable {
 
 // MARK: - PanelController
 
+/// Lightweight change signal for cursor / selection (see `PanelController.cursorSignal`).
+/// Several changes in one event are coalesced into a single notification.
+public final class PanelCursorSignal: ObservableObject {
+    /// Fires once per run-loop pass after cursor or selection changed.
+    public let changes = PassthroughSubject<Void, Never>()
+    private var pending = false
+
+    public init() {}
+
+    func notify() {
+        guard !pending else { return }
+        pending = true
+        objectWillChange.send()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pending = false
+            self.changes.send()
+        }
+    }
+}
+
 @MainActor
 public final class PanelController: ObservableObject {
     public let side: PanelSide
@@ -242,10 +263,18 @@ public final class PanelController: ObservableObject {
     @Published public var activeTabIndex: Int = 0
     @Published public var rawItems: [FileItem] = []
     @Published public var displayedItems: [FileItem] = []
-    @Published public var cursorIndex: Int = 0
-    @Published public var cursorItemID: String? = nil
-    @Published public var scrollTargetID: String? = nil
-    @Published public var selectedItemIDs: Set<String> = []
+    // Cursor and selection are deliberately NOT @Published: moving the cursor must not re-render
+    // the whole panel UI. Changes go through `cursorSignal`; the list view updates its rows
+    // directly and only small views (status bar, Thumbs grid, Quick View) observe the signal.
+    public let cursorSignal = PanelCursorSignal()
+    public var cursorIndex: Int = 0 { didSet { if oldValue != cursorIndex { cursorSignal.notify() } } }
+    public var cursorItemID: String? = nil { didSet { if oldValue != cursorItemID { cursorSignal.notify() } } }
+    public var scrollTargetID: String? = nil { didSet { if oldValue != scrollTargetID { cursorSignal.notify() } } }
+    public var selectedItemIDs: Set<String> = [] { didSet { if oldValue != selectedItemIDs { cursorSignal.notify() } } }
+    /// Per-tab selection kept outside the @Published `tabs` array, so selecting does not
+    /// re-render the panel. Keyed by tab id; moves with the tabs on swap.
+    var tabSelections: [UUID: Set<String>] = [:]
+    var tabPreviousSelections: [UUID: Set<String>] = [:]
     @Published public var currentVolumeInfo: VolumeInfo?
     @Published public var errorMessage: String?
     @Published public var isQuickFilterVisible: Bool = false
@@ -345,7 +374,7 @@ public final class PanelController: ObservableObject {
         errorMessage = nil
         let previousCursorID = cursorItemID
         let previousCursorIndex = cursorIndex
-        selectedItemIDs = activeTab.selectedItemIDs
+        selectedItemIDs = tabSelections[activeTab.id] ?? []
 
         do {
             switch activeTab.vfsMode {
@@ -645,12 +674,12 @@ public final class PanelController: ObservableObject {
     // MARK: - Selection Engine (Space, Insert, +, -, *, /, Cmd+A)
 
     private func syncSelectionToTab() {
-        activeTab.selectedItemIDs = selectedItemIDs
+        tabSelections[activeTab.id] = selectedItemIDs
     }
 
     public func clearSelection() {
         selectedItemIDs.removeAll()
-        activeTab.selectedItemIDs.removeAll()
+        tabSelections[activeTab.id] = []
     }
 
     /// Starts inline rename (Shift+F6 bar) for a specific item, e.g. after a slow double click.
@@ -797,7 +826,7 @@ public final class PanelController: ObservableObject {
     }
 
     public func restoreSelection() {
-        let prev = activeTab.previousSelectedItemIDs
+        let prev = tabPreviousSelections[activeTab.id] ?? []
         guard !prev.isEmpty else { return }
         selectedItemIDs = prev
         syncSelectionToTab()
@@ -831,7 +860,7 @@ public final class PanelController: ObservableObject {
 
     private func savePreviousSelectionSnapshot() {
         if !selectedItemIDs.isEmpty {
-            activeTab.previousSelectedItemIDs = selectedItemIDs
+            tabPreviousSelections[activeTab.id] = selectedItemIDs
         }
     }
 
@@ -917,7 +946,7 @@ public final class PanelController: ObservableObject {
         }
         cursorIndex = activeTab.cursorIndex
         cursorItemID = activeTab.cursorItemID
-        selectedItemIDs = activeTab.selectedItemIDs
+        selectedItemIDs = tabSelections[activeTab.id] ?? []
         reload()
     }
 
@@ -963,7 +992,7 @@ public final class PanelController: ObservableObject {
             activeTabIndex = index
             cursorIndex = activeTab.cursorIndex
             cursorItemID = activeTab.cursorItemID
-            selectedItemIDs = activeTab.selectedItemIDs
+            selectedItemIDs = tabSelections[activeTab.id] ?? []
         }
         if returnLockedTabToBase() { return }
         if switching { reload() }
@@ -1102,7 +1131,6 @@ public final class CommanderViewModel: ObservableObject {
     // UI / Layout Toggles
     @Published public var isHorizontalSplit: Bool = false
     @Published public var isQuickViewActive: Bool = false // Cmd+Y
-    @Published public var showDirectoryTreeSidebar: Bool = false // Cmd+F8
     @Published public var showButtonBar: Bool = true
     @Published public var showDriveBar: Bool = true
     @Published public var showFunctionKeyBar: Bool = true
@@ -1168,7 +1196,6 @@ public final class CommanderViewModel: ObservableObject {
         ButtonBarItem(title: "View", iconName: "rectangle.grid.2x2", command: "cm_SwitchView"),
         ButtonBarItem(title: "Hidden (Cmd+H)", iconName: "h.square", command: "cm_SwitchHidSys"),
         ButtonBarItem(title: "QuickView (Cmd+Y)", iconName: "eye", command: "cm_SrcQuickview"),
-        ButtonBarItem(title: "Tree (Cmd+F8)", iconName: "sidebar.left", command: "cm_SwitchSeparateTree"),
         ButtonBarItem(title: "Multi-Rename (Cmd+M)", iconName: "pencil.and.list.clipboard", command: "cm_MultiRenameFiles"),
         ButtonBarItem(title: "Find Files (Alt+F7)", iconName: "magnifyingglass", command: "cm_SearchFor"),
         ButtonBarItem(title: "Sync Dirs", iconName: "arrow.left.arrow.right.square", command: "cm_FileSync"),
@@ -1185,7 +1212,7 @@ public final class CommanderViewModel: ObservableObject {
     }
 
     /// Commands removed from the toolbar (view modes other than Full / Thumbnails).
-    static let retiredToolbarCommands: Set<String> = ["cm_ExecuteDOS", "cm_SrcBrief", "cm_SrcFull", "cm_SrcThumbs", "cm_SrcComments", "cm_SrcCustom", "cm_DirBranch"]
+    static let retiredToolbarCommands: Set<String> = ["cm_ExecuteDOS", "cm_SrcBrief", "cm_SrcFull", "cm_SrcThumbs", "cm_SrcComments", "cm_SrcCustom", "cm_DirBranch", "cm_SwitchSeparateTree"]
 
     /// Migrates a saved toolbar: drops retired view-mode buttons, adds View + Hidden after Reread.
     static func migrateToolbar(_ items: [ButtonBarItem]) -> [ButtonBarItem] {
@@ -1237,10 +1264,15 @@ public final class CommanderViewModel: ObservableObject {
     public func swapPanels() {
         let leftTabs = leftPanel.tabs
         let leftIdx = leftPanel.activeTabIndex
+        let leftSel = leftPanel.tabSelections, leftPrev = leftPanel.tabPreviousSelections
         leftPanel.tabs = rightPanel.tabs
         leftPanel.activeTabIndex = rightPanel.activeTabIndex
+        leftPanel.tabSelections = rightPanel.tabSelections
+        leftPanel.tabPreviousSelections = rightPanel.tabPreviousSelections
         rightPanel.tabs = leftTabs
         rightPanel.activeTabIndex = leftIdx
+        rightPanel.tabSelections = leftSel
+        rightPanel.tabPreviousSelections = leftPrev
         leftPanel.reload()
         rightPanel.reload()
     }
@@ -1266,8 +1298,6 @@ public final class CommanderViewModel: ObservableObject {
             activePanel.reload()
         case "cm_SrcQuickview":
             isQuickViewActive.toggle()
-        case "cm_SwitchSeparateTree":
-            showDirectoryTreeSidebar.toggle()
         case "cm_MultiRenameFiles":
             openMultiRename()
         case "cm_SearchFor":
@@ -1510,9 +1540,9 @@ public final class CommanderViewModel: ObservableObject {
             rightItems: rightPanel.displayedItems
         )
         leftPanel.selectedItemIDs = selL
-        leftPanel.activeTab.selectedItemIDs = selL
+        leftPanel.tabSelections[leftPanel.activeTab.id] = selL
         rightPanel.selectedItemIDs = selR
-        rightPanel.activeTab.selectedItemIDs = selR
+        rightPanel.tabSelections[rightPanel.activeTab.id] = selR
         statusBannerMessage = "Compare Dirs: Selected \(selL.count) in Left, \(selR.count) in Right"
     }
 

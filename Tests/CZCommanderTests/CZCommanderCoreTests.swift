@@ -421,7 +421,7 @@ extension CZCommanderCoreTests {
             ButtonBarItem(title: "Tree (Ctrl+F8)", iconName: "sidebar.left", command: "cm_SwitchSeparateTree")
         ]
         let migrated = CommanderViewModel.migrateToolbar(old).map(\.command)
-        XCTAssertEqual(migrated, ["cm_RereadSource", "cm_SwitchView", "cm_SwitchHidSys", "cm_SwitchSeparateTree"])
+        XCTAssertEqual(migrated, ["cm_RereadSource", "cm_SwitchView", "cm_SwitchHidSys"], "Tree and legacy view buttons are retired")
         XCTAssertEqual(CommanderViewModel.migrateToolbar(CommanderViewModel.migrateToolbar(old)).map(\.command), migrated)
         XCTAssertEqual(PanelViewMode.brief.normalizedForUI, .full)
         XCTAssertEqual(PanelViewMode.thumbnails.normalizedForUI, .thumbnails)

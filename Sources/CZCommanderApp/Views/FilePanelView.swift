@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import CZCommanderCore
 
@@ -601,7 +602,7 @@ public struct FilePanelView: View {
 
             columnHeaderButton(.modificationDate, alignment: .leading)
                 .padding(.leading, 6)
-                .frame(width: 122, alignment: .leading)
+                .frame(width: 134, alignment: .leading)
         }
         .padding(.vertical, 3)
         .background(palette.toolbarBackground.swiftUIColor)
@@ -633,9 +634,9 @@ public struct FilePanelView: View {
     private var fileListContent: some View {
         switch panel.activeTab.viewMode {
         case .thumbnails:
-            thumbnailsGridView
+            CursorObserving(panel.cursorSignal) { thumbnailsGridView }
         case .brief:
-            briefMultiColumnView
+            CursorObserving(panel.cursorSignal) { briefMultiColumnView }
         default:
             NativeFileTableView(viewModel: viewModel, panel: panel)
         }
@@ -812,11 +813,10 @@ public struct FilePanelView: View {
 
     private var panelStatusBar: some View {
         HStack {
-            Text(panel.statusBarText(format: viewModel.sizeDisplayFormat))
-                .font(.system(size: 11, weight: .bold).monospacedDigit())
-                .foregroundColor(palette.regularFileText.swiftUIColor)
-                .lineLimit(1)
-            Spacer()
+            // AppKit label updated straight from the cursor signal: selecting files must not
+            // trigger a SwiftUI layout pass of the whole window.
+            PanelStatusLabel(panel: panel, format: viewModel.sizeDisplayFormat, color: palette.regularFileText.nsColor)
+                .frame(maxWidth: .infinity, minHeight: 15, maxHeight: 15)
             if let err = panel.errorMessage {
                 Text(err)
                     .font(.system(size: 10))
@@ -847,5 +847,68 @@ final class GridRenameTimer {
     func cancel() {
         work?.cancel()
         work = nil
+    }
+}
+
+
+/// Re-renders only its content when the panel cursor or selection changes
+/// (the rest of the panel UI is not invalidated by cursor moves).
+struct CursorObserving<Content: View>: View {
+    @ObservedObject var signal: PanelCursorSignal
+    let content: () -> Content
+
+    init(_ signal: PanelCursorSignal, @ViewBuilder content: @escaping () -> Content) {
+        self.signal = signal
+        self.content = content
+    }
+
+    var body: some View { content() }
+}
+
+
+/// Status bar summary as a fixed-size AppKit label that refreshes itself on cursor / selection
+/// changes without involving SwiftUI.
+struct PanelStatusLabel: NSViewRepresentable {
+    let panel: PanelController
+    let format: FileSizeDisplayFormat
+    let color: NSColor
+
+    final class Box: NSView {
+        let label = NSTextField(labelWithString: "")
+        var subscription: AnyCancellable?
+        var refresh: (() -> Void)?
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            label.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.autoresizingMask = [.width]
+            addSubview(label)
+        }
+        required init?(coder: NSCoder) { fatalError() }
+
+        override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 15) }
+        override var isFlipped: Bool { true }
+        override func layout() {
+            super.layout()
+            label.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        }
+    }
+
+    func makeNSView(context: Context) -> Box {
+        let box = Box()
+        box.subscription = panel.cursorSignal.changes.sink { [weak box] in box?.refresh?() }
+        return box
+    }
+
+    func updateNSView(_ box: Box, context: Context) {
+        let panel = self.panel, format = self.format
+        box.label.textColor = color
+        box.refresh = { [weak box] in
+            let text = panel.statusBarText(format: format)
+            if box?.label.stringValue != text { box?.label.stringValue = text }
+        }
+        box.refresh?()
     }
 }

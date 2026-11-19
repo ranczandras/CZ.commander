@@ -42,13 +42,26 @@ enum MainWindowController {
             defer: false
         )
         window.title = "CZ.commander"
-        window.contentView = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: root)
+        // Performance: don't derive window size constraints from the SwiftUI layout. Otherwise every
+        // tiny change (e.g. the status bar text on a cursor move) re-measures the whole window,
+        // including the adaptive toolbars. The window's min size is set explicitly below.
+        host.sizingOptions = []
+        // Host inside a plain container (frame-based), so AppKit never asks SwiftUI for window
+        // size constraints during the constraint pass.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1400, height: 860))
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        host.translatesAutoresizingMaskIntoConstraints = true
+        container.addSubview(host)
+        window.contentView = container
         window.isReleasedWhenClosed = false
         window.hasShadow = true
         window.isOpaque = true
         window.backgroundColor = .windowBackgroundColor
         window.minSize = NSSize(width: 1024, height: 660)
         window.isExcludedFromWindowsMenu = false
+        window.animationBehavior = .none
         window.collectionBehavior = [.managed, .participatesInCycle]
         if !window.setFrameUsingName("CZMainWindow") {
             window.center()
@@ -73,11 +86,11 @@ enum CommanderWindowActions {
         guard let window, let screen = window.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         if window.frame.equalTo(visible), let previous = frameBeforeZoom {
-            window.setFrame(previous, display: true, animate: true)
+            window.setFrame(previous, display: true, animate: false)
             frameBeforeZoom = nil
         } else {
             frameBeforeZoom = window.frame
-            window.setFrame(visible, display: true, animate: true)
+            window.setFrame(visible, display: true, animate: false)
         }
     }
 }

@@ -297,7 +297,6 @@ struct SquareModalHost<Content: View>: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
-        .transition(.opacity)
     }
 
     /// Move keyboard focus from the file panels into the dialog's first (top-most) text field.

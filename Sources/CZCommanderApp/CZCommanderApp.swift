@@ -246,9 +246,6 @@ public struct CZCommanderMainApp: App {
             }
             .keyboardShortcut("y", modifiers: [.command])
 
-            Button("Separate Directory Tree (Cmd+F8)") {
-                viewModel.showDirectoryTreeSidebar.toggle()
-            }
 
             Divider()
             Button("Sort by Name (Cmd+F3)") {
@@ -451,10 +448,10 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             guard let window = MainWindowController.window else { NSApp.terminate(nil); return }
             guard index < widths.count else { shootDialogs(window, 0); return }
             if index == 0 {
-                let info = "key=\(window.isKeyWindow) main=\(window.isMainWindow) borderless=\(window.styleMask.contains(.titled) == false) resizable=\(window.styleMask.contains(.resizable)) firstResponder=\(String(describing: type(of: window.firstResponder as Any)))\n"
+                let info = "contentView=\(String(describing: window.contentView.map { type(of: $0) })) subviews=\(window.contentView?.subviews.count ?? 0) key=\(window.isKeyWindow) main=\(window.isMainWindow) borderless=\(window.styleMask.contains(.titled) == false) resizable=\(window.styleMask.contains(.resizable)) firstResponder=\(String(describing: type(of: window.firstResponder as Any)))\n"
                 try? info.write(toFile: (dir as NSString).appendingPathComponent("window_info.txt"), atomically: true, encoding: .utf8)
             }
-            window.setFrame(NSRect(x: 40, y: 200, width: widths[index], height: 600), display: true)
+            window.setFrame(NSRect(x: 40, y: 120, width: widths[index], height: 720), display: true)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 if let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: rep)
@@ -466,7 +463,48 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
         }
         // CZ_SNAPSHOT_DIALOGS=multiRename,findFiles,settings,mkdir also captures those dialogs.
         let dialogs = (env["CZ_SNAPSHOT_DIALOGS"] ?? "").split(separator: ",").map(String.init)
+        // CZ_BENCH=1: time 300 cursor steps + 100 selection toggles, each followed by a full display pass.
+        func runBench(_ window: NSWindow) {
+            let vm = CommanderViewModel.shared
+            let panel = vm.activePanel
+            panel.setCursor(to: 0)
+            func step(_ body: () -> Void) -> Double {
+                let t = CFAbsoluteTimeGetCurrent()
+                body()
+                // Drain everything queued by the change (coalesced signals, SwiftUI updates) before timing stops
+                var drained = false
+                DispatchQueue.main.async { drained = true }
+                while !drained { RunLoop.main.run(mode: .default, before: .distantFuture) }
+                window.displayIfNeeded()
+                return (CFAbsoluteTimeGetCurrent() - t) * 1000
+            }
+            var moves: [Double] = []
+            for i in 0..<(env["CZ_BENCH"] == "long" ? 3000 : 300) { moves.append(step { panel.moveCursor(by: i % 60 < 30 ? 1 : -1) }) }
+            var toggles: [Double] = []
+            for _ in 0..<100 { toggles.append(step { panel.toggleSelectionAtCursor(advanceCursor: true, calculateDirSizeOnSpace: false) }) }
+            func stats(_ a: [Double]) -> String {
+                let s = a.sorted()
+                return String(format: "avg %.2f ms, p50 %.2f, p95 %.2f, max %.2f", a.reduce(0, +) / Double(a.count), s[s.count / 2], s[Int(Double(s.count) * 0.95)], s.last ?? 0)
+            }
+            let line = "items=\(panel.displayedItems.count) cursor: \(stats(moves)) | select: \(stats(toggles))\n"
+            if let h = FileHandle(forWritingAtPath: (dir as NSString).appendingPathComponent("window_info.txt")) {
+                h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile()
+            }
+        }
+
+        var benchDone = false
         func shootDialogs(_ window: NSWindow, _ i: Int) {
+            if i == 0, env["CZ_BENCH"] != nil, !benchDone {
+                // Run from a timer (not a main-queue block) so the nested run loop can drain the main queue.
+                benchDone = true
+                Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { _ in
+                    MainActor.assumeIsolated {
+                        runBench(window)
+                        shootDialogs(window, 0)
+                    }
+                }
+                return
+            }
             guard i < dialogs.count else { NSApp.terminate(nil); return }
             let vm = CommanderViewModel.shared
             let path = vm.activePanel.currentPath
@@ -730,11 +768,7 @@ public final class CommanderKeyboardRouter {
 
         if special == .f8 || event.keyCode == 100 {
             lastHandledTimestamp = event.timestamp
-            if isControl || isCommand {
-                vm.showDirectoryTreeSidebar.toggle()
-            } else {
-                vm.triggerF8Delete(permanent: isShift)
-            }
+            vm.triggerF8Delete(permanent: isShift)
             return true
         }
 
@@ -933,11 +967,7 @@ public final class CommanderKeyboardRouter {
                 return true
             case "8":
                 lastHandledTimestamp = event.timestamp
-                if isControl {
-                    vm.showDirectoryTreeSidebar.toggle()
-                } else {
-                    vm.triggerF8Delete(permanent: isShift)
-                }
+                vm.triggerF8Delete(permanent: isShift)
                 return true
             case "9":
                 lastHandledTimestamp = event.timestamp

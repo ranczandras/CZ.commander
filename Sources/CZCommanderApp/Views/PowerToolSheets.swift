@@ -667,9 +667,7 @@ public struct CompareByContentSheetView: View {
                     .onChange(of: currentDiffCursor) { _, newCursor in
                         if rep.differenceRowIndices.indices.contains(newCursor) {
                             let targetRowID = rep.differenceRowIndices[newCursor]
-                            withAnimation {
-                                proxy.scrollTo(targetRowID, anchor: .center)
-                            }
+                            proxy.scrollTo(targetRowID, anchor: .center)
                         }
                     }
                 }

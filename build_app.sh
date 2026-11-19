@@ -232,10 +232,12 @@ else
     /usr/bin/codesign --force --deep --identifier com.czcommander.macos --sign - "$APP_BUNDLE" 2>/dev/null || true
 fi
 /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
-rm -rf "/Applications/$APP_NAME.app"
-/usr/bin/ditto --noextattr --noqtn "$APP_BUNDLE" "/Applications/$APP_NAME.app"
+if [[ "${CZ_SKIP_INSTALL:-0}" != "1" ]]; then
+    rm -rf "/Applications/$APP_NAME.app"
+    /usr/bin/ditto --noextattr --noqtn "$APP_BUNDLE" "/Applications/$APP_NAME.app"
+fi
 rm -rf "$PROJECT_DIR/$APP_NAME.app"
 /usr/bin/ditto --noextattr --noqtn "$APP_BUNDLE" "$PROJECT_DIR/$APP_NAME.app"
 
-echo "==> Build Complete: /Applications/$APP_NAME.app (+ copy in project folder)"
-file "/Applications/$APP_NAME.app/Contents/MacOS/CZCommander"
+echo "==> Build Complete: $APP_BUNDLE (installed to /Applications unless CZ_SKIP_INSTALL=1)"
+file "$APP_BUNDLE/Contents/MacOS/CZCommander"

@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AppKit
 import CZCommanderCore
 
@@ -59,9 +60,9 @@ public struct NativeFileTableView: NSViewRepresentable {
 
         let dateCol = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("date"))
         dateCol.title = "Date"
-        dateCol.width = 122
-        dateCol.minWidth = 122
-        dateCol.maxWidth = 122
+        dateCol.width = 134
+        dateCol.minWidth = 134
+        dateCol.maxWidth = 134
         dateCol.resizingMask = []
         tableView.addTableColumn(dateCol)
 
@@ -90,6 +91,10 @@ public struct NativeFileTableView: NSViewRepresentable {
         }
 
         scrollView.documentView = tableView
+        // Cursor / selection changes bypass SwiftUI and update the affected rows directly.
+        coord.cursorSubscription = panel.cursorSignal.changes.sink { [weak coord] in
+            coord?.syncCursorAndSelection()
+        }
         return scrollView
     }
 
@@ -116,6 +121,7 @@ public struct NativeFileTableView: NSViewRepresentable {
         private var lastFontSize: Double = 12.5
         private var lastSizeFormat: FileSizeDisplayFormat = .dynamicKMG
         private var lastScrollTargetID: String? = nil
+        var cursorSubscription: AnyCancellable?
 
         init(viewModel: CommanderViewModel, panel: PanelController) {
             self.viewModel = viewModel
@@ -148,6 +154,34 @@ public struct NativeFileTableView: NSViewRepresentable {
                 lastSizeFormat = viewModel.sizeDisplayFormat
                 tv.reloadData()
             } else {
+                syncCursorRows(tv, isActive: isActive)
+            }
+
+            syncInPlaceRename()
+            syncScrollTarget(tv)
+        }
+
+        /// Fast path used on every cursor move / selection change (no item comparison, no SwiftUI).
+        func syncCursorAndSelection() {
+            guard let tv = tableView else { return }
+            syncCursorRows(tv, isActive: viewModel.activeSide == panel.side)
+            syncScrollTarget(tv)
+        }
+
+        private func syncScrollTarget(_ tv: NSTableView) {
+            let newCursor = panel.cursorIndex
+            if let scrollID = panel.scrollTargetID, scrollID != lastScrollTargetID {
+                lastScrollTargetID = scrollID
+                if newCursor >= 0 && newCursor < cachedItems.count {
+                    tv.scrollRowToVisible(newCursor)
+                }
+            }
+        }
+
+        private func syncCursorRows(_ tv: NSTableView, isActive: Bool) {
+            let newCursor = panel.cursorIndex
+            let newSelected = panel.selectedItemIDs
+            do {
                 var rowsToReload = IndexSet()
                 if lastCursorIndex != newCursor || lastIsActive != isActive {
                     if lastCursorIndex >= 0 && lastCursorIndex < cachedItems.count {
@@ -175,15 +209,6 @@ public struct NativeFileTableView: NSViewRepresentable {
                             configureRowView(rowView, forRow: r)
                         }
                     }
-                }
-            }
-
-            syncInPlaceRename()
-
-            if let scrollID = panel.scrollTargetID, scrollID != lastScrollTargetID {
-                lastScrollTargetID = scrollID
-                if newCursor >= 0 && newCursor < cachedItems.count {
-                    tv.scrollRowToVisible(newCursor)
                 }
             }
         }
@@ -344,6 +369,7 @@ public struct NativeFileTableView: NSViewRepresentable {
                 cell.label.font = palette.useUniformBlackFileText
                     ? NSFont.systemFont(ofSize: fontSize, weight: .bold)
                     : NSFont.monospacedSystemFont(ofSize: fontSize, weight: (item.isDirectory || isSelected) ? .bold : .regular)
+                cell.placeSubviews()
                 return cell
             } else {
                 let cellID = NSUserInterfaceItemIdentifier("TextCell_\(colID)")
@@ -380,6 +406,7 @@ public struct NativeFileTableView: NSViewRepresentable {
                 }
 
                 cell.label.textColor = textColor
+                cell.placeSubviews()
                 return cell
             }
         }
@@ -719,6 +746,7 @@ struct RightClickSelectCatcher: NSViewRepresentable {
 // MARK: - Custom 0.0ms Mouse-Down AppKit TableView & Cell Views
 
 public final class CommanderNSTableView: NSTableView {
+    public override var needsUpdateConstraints: Bool { get { false } set { } }
     var onInstantRowPress: ((Int, Int, Bool) -> Void)?
     var contextMenuProvider: ((Int) -> NSMenu?)?
 
@@ -814,7 +842,22 @@ public final class CommanderNSTableView: NSTableView {
     }
 }
 
+// MARK: - Constraint-free views
+// Views inside the list never request an Auto Layout pass. AppKit would otherwise propagate the
+// request up to the SwiftUI host, which then re-measures the whole window on every scroll step.
+
+final class FrameLabel: NSTextField {
+    override var needsUpdateConstraints: Bool { get { false } set { } }
+    override func invalidateIntrinsicContentSize() { }
+}
+
+final class FrameImageView: NSImageView {
+    override var needsUpdateConstraints: Bool { get { false } set { } }
+    override func invalidateIntrinsicContentSize() { }
+}
+
 public final class CommanderRowView: NSTableRowView {
+    public override var needsUpdateConstraints: Bool { get { false } set { } }
     var fillColor: NSColor = .white
     var borderColor: NSColor? = nil
     var borderWidth: CGFloat = 0
@@ -831,60 +874,83 @@ public final class CommanderRowView: NSTableRowView {
     }
 }
 
+/// Name cell with frame-based layout (no Auto Layout): reconfiguring cells on every cursor move
+/// must not trigger a window-wide constraint pass (which also re-measures the SwiftUI host).
 public final class CommanderNameCellView: NSTableCellView {
-    let iconView = NSImageView()
-    let label = NSTextField(labelWithString: "")
+    let iconView = FrameImageView()
+    let label = FrameLabel(labelWithString: "")
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
-
-        label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
         label.drawsBackground = false
         label.isBezeled = false
         label.isEditable = false
-
         addSubview(iconView)
         addSubview(label)
-
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 5),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    public override var needsUpdateConstraints: Bool {
+        get { false }
+        set { }
+    }
+
+    public override func layout() {
+        super.layout()
+        placeSubviews()
+    }
+
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        placeSubviews()
+    }
+
+    func placeSubviews() {
+        let h = bounds.height
+        iconView.frame = NSRect(x: 6, y: (h - 16) / 2, width: 16, height: 16)
+        let lh = ceil(label.font?.boundingRectForFont.height ?? 16)
+        label.frame = NSRect(x: 27, y: (h - lh) / 2, width: max(0, bounds.width - 31), height: lh)
+    }
 }
 
+/// Text cell with frame-based layout (see `CommanderNameCellView`).
 public final class CommanderTextCellView: NSTableCellView {
-    let label = NSTextField(labelWithString: "")
+    let label = FrameLabel(labelWithString: "")
 
     init(alignment: NSTextAlignment) {
         super.init(frame: .zero)
-        label.translatesAutoresizingMaskIntoConstraints = false
         label.alignment = alignment
         label.lineBreakMode = .byTruncatingTail
         label.maximumNumberOfLines = 1
         label.drawsBackground = false
         label.isBezeled = false
         label.isEditable = false
-
         addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    public override var needsUpdateConstraints: Bool {
+        get { false }
+        set { }
+    }
+
+    public override func layout() {
+        super.layout()
+        placeSubviews()
+    }
+
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        placeSubviews()
+    }
+
+    func placeSubviews() {
+        let lh = ceil(label.font?.boundingRectForFont.height ?? 16)
+        label.frame = NSRect(x: 4, y: (bounds.height - lh) / 2, width: max(0, bounds.width - 8), height: lh)
+    }
 }

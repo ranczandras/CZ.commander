@@ -43,9 +43,6 @@ public struct MainCommanderWindowView: View {
 
             // Main Workspace Area: Optional Tree Sidebar + Dual Panels (or QuickView)
             HStack(spacing: 0) {
-                if viewModel.showDirectoryTreeSidebar {
-                    DirectoryTreeSidebarView(viewModel: viewModel)
-                }
 
                 if viewModel.isHorizontalSplit {
                     VSplitView {
@@ -68,6 +65,11 @@ public struct MainCommanderWindowView: View {
         .background(palette.panelBackground.swiftUIColor)
         .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 1))
         .ignoresSafeArea()
+        // Speed over eye candy: no implicit animations or fades anywhere in the app.
+        .transaction { t in
+            t.animation = nil
+            t.disablesAnimations = true
+        }
         .preferredColorScheme(palette.isLightTheme ? .light : .dark)
         .onAppear {
             DispatchQueue.main.async {
@@ -225,6 +227,9 @@ public struct MainCommanderWindowView: View {
         }
     }
 
+    /// Strong orange so an active toggle (e.g. hidden files shown) is obvious at a glance.
+    static let toggleOnColor = Color(red: 0.96, green: 0.45, blue: 0.05)
+
     private func toolbarIsOn(_ btn: ButtonBarItem) -> Bool {
         btn.command == "cm_SwitchHidSys" && viewModel.showHiddenFiles
     }
@@ -275,9 +280,9 @@ public struct MainCommanderWindowView: View {
                     .fixedSize()
                     .padding(.horizontal, showTitles ? (stacked ? 4 : 7) : 6)
                     .padding(.vertical, 4)
-                    .background(Rectangle().fill(toolbarIsOn(btn) ? palette.selectedRowTint.swiftUIColor : palette.toolbarBackground.swiftUIColor))
-                    .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.8))
-                    .foregroundColor(palette.regularFileText.swiftUIColor)
+                    .background(Rectangle().fill(toolbarIsOn(btn) ? Self.toggleOnColor : palette.toolbarBackground.swiftUIColor))
+                    .overlay(Rectangle().stroke(toolbarIsOn(btn) ? Self.toggleOnColor : palette.dividerColor.swiftUIColor, lineWidth: 0.8))
+                    .foregroundColor(toolbarIsOn(btn) ? .white : palette.regularFileText.swiftUIColor)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
