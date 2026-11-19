@@ -1,6 +1,10 @@
-<img src="docs/icon.png" width="128" alt="CZ.commander icon">
+<a href="https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip"><img src="docs/icon.png" width="128" alt="Download CZ.commander"></a>
 
 # CZ.commander
+
+### [⬇ Download CZ.commander for macOS](https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip)
+
+Click the icon or the link above (or [`CZ.commander.zip`](CZ.commander.zip) in the file list), unzip, move **CZ.commander.app** to `/Applications`. First launch: **System Settings → Privacy & Security → Open Anyway**.
 
 A native macOS dual-pane file manager for Apple Silicon, inspired by the classic Total Commander workflow: two panels, folder tabs, function-key operations and a toolbox of power tools. Built with SwiftUI + AppKit, no third-party dependencies.
 
@@ -9,8 +13,6 @@ A native macOS dual-pane file manager for Apple Silicon, inspired by the classic
 ---
 
 ## Download
-
-### [⬇ Download CZ.commander (latest)](https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip)
 
 Unzip it and move **CZ.commander.app** to `/Applications`. (The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.) The app is not notarized by Apple, so the first launch is blocked; open it once, then choose **System Settings → Privacy & Security → Open Anyway**.
 
@@ -81,6 +83,7 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
   - **Locked, but directory changes allowed (`!`)**: navigate freely; selecting the tab again jumps back to the locked folder.
   - Tab menu: rename, duplicate, open in other panel, relock to current folder, close other / unlocked / duplicate tabs.
 - Drive bar with every mounted volume and free space, plus quick folders (`~`, Desktop, Downloads, Documents, Applications, `/`, Trash). Adapts to the panel width.
+- Sizes are always shown in the largest sensible unit (B, KB, MB, GB, TB).
 - Two view modes: **Full** (name, extension, size, date) and **Thumbnails**; the **View** toolbar button switches between them.
 - **Hidden** toolbar button (`Cmd+H`) shows or hides hidden files; it turns orange while hidden files are shown.
 - Built for speed: no animations; cursor moves and selection update the list directly without re-rendering the rest of the window (well under 1 ms per step).

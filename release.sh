@@ -26,14 +26,17 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 echo "$VERSION" > VERSION
-git add VERSION
-git commit -m "Release v$VERSION"
 
 CZ_SKIP_INSTALL=1 zsh ./build_app.sh
 
 ZIP="$BUILD_DIR/CZ.commander.zip"
 rm -f "$ZIP"
 /usr/bin/ditto -c -k --keepParent "$BUILD_DIR/stage/CZ.commander.app" "$ZIP"
+
+# The newest app zip also lives in the repository root, so it shows up in the file list
+cp "$ZIP" "$PROJECT_DIR/CZ.commander.zip"
+git add VERSION CZ.commander.zip
+git commit -m "Release v$VERSION"
 
 git tag "v$VERSION"
 git push

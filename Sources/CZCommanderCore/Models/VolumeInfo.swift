@@ -45,13 +45,9 @@ public struct VolumeInfo: Identifiable, Hashable, Codable, Sendable {
         return Double(freeBytes) / Double(totalBytes)
     }
 
-    /// Classic Total Commander volume header text: `[Macintosh HD] (APFS) 120 456 789 k of 500 000 000 k free`
+    /// Volume header text: `[Macintosh HD] (APFS) 51.52 GB free of 460.43 GB`
     public func tcHeaderDescription() -> String {
-        let freeKB = freeBytes / 1024
-        let totalKB = totalBytes / 1024
-        let freeStr = FileItem.formatWithThousandsSeparator(freeKB)
-        let totalStr = FileItem.formatWithThousandsSeparator(totalKB)
-        return "[\(name)] (\(fileSystemType)) \(freeStr) k of \(totalStr) k free"
+        "[\(name)] (\(fileSystemType)) \(FileItem.formatByteCount(freeBytes)) free of \(FileItem.formatByteCount(totalBytes))"
     }
 }
 

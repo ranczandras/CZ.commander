@@ -984,13 +984,6 @@ public struct SettingsSheetView: View {
             Form {
                 SquarePicker("Color Theme:", selection: $viewModel.themeID, options: CommanderThemeID.allCases.map { t in (value: t, title: t.displayName) })
 
-                SquarePicker("Size display format:", selection: $viewModel.sizeDisplayFormat, options: [
-                    (value: FileSizeDisplayFormat.dynamicKMG, title: "Dynamic (k / M / G)"),
-                    (value: FileSizeDisplayFormat.dynamicKMGT, title: "Dynamic (B / k / M / G / T)"),
-                    (value: FileSizeDisplayFormat.bytes, title: "Exact Bytes (123 456 789)"),
-                    (value: FileSizeDisplayFormat.kilobytes, title: "Kilobytes (123 456 k)")
-                ])
-
                 HStack {
                     Text("Font size (\(String(format: "%.1f", viewModel.fontSize)) pt):")
                     Slider(value: $viewModel.fontSize, in: 10.5...16.5, step: 0.5)

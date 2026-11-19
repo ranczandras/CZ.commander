@@ -248,34 +248,21 @@ public struct FileItem: Identifiable, Hashable, Codable, Sendable {
         return Self.formatByteCount(size, format: format)
     }
 
-    public static func formatByteCount(_ bytes: Int64, format: FileSizeDisplayFormat = .dynamicKMG) -> String {
-        switch format {
-        case .bytes:
-            return formatWithThousandsSeparator(bytes)
-        case .kilobytes:
-            let kb = max(1, (bytes + 1023) / 1024)
-            return "\(formatWithThousandsSeparator(kb)) k"
-        case .dynamicKMG:
-            if bytes < 1_000_000 {
-                return formatWithThousandsSeparator(bytes)
-            } else if bytes < 1_000_000_000 {
-                return String(format: "%.1f M", Double(bytes) / 1_048_576.0)
-            } else {
-                return String(format: "%.2f G", Double(bytes) / 1_073_741_824.0)
-            }
-        case .dynamicKMGT:
-            if bytes < 1024 {
-                return "\(bytes) B"
-            } else if bytes < 1_048_576 {
-                return String(format: "%.1f k", Double(bytes) / 1024.0)
-            } else if bytes < 1_073_741_824 {
-                return String(format: "%.1f M", Double(bytes) / 1_048_576.0)
-            } else if bytes < 1_099_511_627_776 {
-                return String(format: "%.2f G", Double(bytes) / 1_073_741_824.0)
-            } else {
-                return String(format: "%.2f T", Double(bytes) / 1_099_511_627_776.0)
-            }
+    /// Human-readable size in the largest unit that keeps the value >= 1 (1024-based):
+    /// `512 B`, `3.4 KB`, `12.7 MB`, `1.25 GB`, `2.03 TB`. The `format` parameter is kept for
+    /// source / config compatibility; every size in the app uses this one style.
+    public static func formatByteCount(_ bytes: Int64, format: FileSizeDisplayFormat = .dynamicKMGT) -> String {
+        let value = Double(max(0, bytes))
+        let units: [(String, Double, String)] = [
+            ("TB", 1_099_511_627_776, "%.2f"),
+            ("GB", 1_073_741_824, "%.2f"),
+            ("MB", 1_048_576, "%.1f"),
+            ("KB", 1024, "%.1f")
+        ]
+        for (unit, size, pattern) in units where value >= size {
+            return String(format: pattern, value / size) + " " + unit
         }
+        return "\(max(0, bytes)) B"
     }
 
     @inline(__always)

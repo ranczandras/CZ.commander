@@ -476,3 +476,17 @@ extension CZCommanderCoreTests {
         XCTAssertEqual(AppVersion.components("v1.2.3-beta"), [1, 2, 3])
     }
 }
+
+// MARK: - Human-readable sizes
+
+extension CZCommanderCoreTests {
+    func testByteCountUsesLargestUnit() {
+        XCTAssertEqual(FileItem.formatByteCount(0), "0 B")
+        XCTAssertEqual(FileItem.formatByteCount(1023), "1023 B")
+        XCTAssertEqual(FileItem.formatByteCount(1536), "1.5 KB")
+        XCTAssertEqual(FileItem.formatByteCount(5 * 1_048_576 + 400_000), "5.4 MB")
+        XCTAssertEqual(FileItem.formatByteCount(3 * 1_073_741_824), "3.00 GB")
+        XCTAssertEqual(FileItem.formatByteCount(2 * 1_099_511_627_776 + 1_099_511_627_776 / 4), "2.25 TB")
+        XCTAssertEqual(FileItem.formatByteCount(1536, format: .bytes), "1.5 KB", "one style everywhere")
+    }
+}
