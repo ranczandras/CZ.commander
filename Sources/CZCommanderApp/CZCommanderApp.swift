@@ -530,7 +530,18 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { shootDialogs(window, i + 1) }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { shoot(0) }
+        // CZ_SNAPSHOT_PATH=/dir opens that folder in the active panel; CZ_SNAPSHOT_VIEW=thumbs switches to Thumbnails.
+        if let path = env["CZ_SNAPSHOT_PATH"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                let panel = CommanderViewModel.shared.activePanel
+                panel.navigateTo(path: path)
+                if env["CZ_SNAPSHOT_VIEW"] == "thumbs" {
+                    panel.activeTab.viewMode = .thumbnails
+                    panel.reload()
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + (env["CZ_SNAPSHOT_PATH"] == nil ? 2.0 : 5.0)) { shoot(0) }
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

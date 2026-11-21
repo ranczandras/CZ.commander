@@ -760,19 +760,14 @@ public struct FilePanelView: View {
         }
     }
 
-    @ViewBuilder
+    /// Real previews (QuickLook, Blackmagic RAW for .braw) generated in the background.
     private func thumbnailPreviewImage(for item: FileItem) -> some View {
-        if item.category == .image, let nsImg = NSImage(contentsOfFile: item.fullPath) {
-            Image(nsImage: nsImg)
-                .resizable()
-                .scaledToFit()
-        } else {
-            Image(systemName: palette.sfSymbol(for: item))
-                .resizable()
-                .scaledToFit()
-                .padding(16)
-                .foregroundColor(palette.iconColor(for: item, isSelected: false, isFocused: false))
-        }
+        AsyncThumbnailView(
+            item: item,
+            pointSize: panel.thumbnailSize,
+            fallbackSymbol: palette.sfSymbol(for: item),
+            fallbackColor: palette.iconColor(for: item, isSelected: false, isFocused: false)
+        )
     }
 
     // MARK: - 6. Quick Filter Bar (Cmd+S)

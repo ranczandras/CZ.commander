@@ -24,9 +24,19 @@ let package = Package(
                 .swiftLanguageMode(.v5)
             ]
         ),
+        .target(
+            name: "BRAWBridge",
+            path: "Sources/BRAWBridge",
+            exclude: ["BlackmagicSDK/README.md"],
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedFramework("CoreFoundation"),
+                .linkedFramework("CoreGraphics")
+            ]
+        ),
         .executableTarget(
             name: "CZCommander",
-            dependencies: ["CZCommanderCore"],
+            dependencies: ["CZCommanderCore", "BRAWBridge"],
             path: "Sources/CZCommanderApp",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
@@ -40,5 +50,6 @@ let package = Package(
                 .swiftLanguageMode(.v5)
             ]
         )
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )

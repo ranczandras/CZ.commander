@@ -84,6 +84,7 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
   - Tab menu: rename, duplicate, open in other panel, relock to current folder, close other / unlocked / duplicate tabs.
 - Drive bar with every mounted volume and free space, plus quick folders (`~`, Desktop, Downloads, Documents, Applications, `/`, Trash). Adapts to the panel width.
 - Sizes are always shown in the largest sensible unit (B, KB, MB, GB, TB).
+- **Thumbnails** show real previews generated in the background: QuickLook for images, video, PDF and documents, and the first frame of **Blackmagic RAW (.braw)** clips. BRAW decoding uses the Blackmagic RAW decoder already installed with Blackmagic RAW Player or DaVinci Resolve (free from Blackmagic Design); without it .braw files show an icon.
 - Two view modes: **Full** (name, extension, size, date) and **Thumbnails**; the **View** toolbar button switches between them.
 - **Hidden** toolbar button (`Cmd+H`) shows or hides hidden files; it turns orange while hidden files are shown.
 - Built for speed: no animations; cursor moves and selection update the list directly without re-rendering the rest of the window (well under 1 ms per step).
@@ -116,4 +117,4 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). `Sources/BRAWBridge/BlackmagicSDK` contains the Blackmagic RAW API header and loader from the Blackmagic RAW SDK under Blackmagic Design's permissive license (see the file headers).
