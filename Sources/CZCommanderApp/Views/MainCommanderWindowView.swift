@@ -158,6 +158,14 @@ public struct MainCommanderWindowView: View {
             .buttonStyle(.plain)
             .help("Target = Source")
 
+            // Cleanup & Empty Trash
+            quickToolButton(title: "Cleanup", symbol: "sparkles", help: "Find and delete junk: Trash, caches, logs, leftovers") {
+                viewModel.activeSheet = .cleanup
+            }
+            quickToolButton(title: "Empty Trash", symbol: "trash", help: "Empty Trash (Cmd+Shift+Backspace)") {
+                viewModel.activeSheet = .emptyTrash
+            }
+
             // Theme Quick Menu
             Menu {
                 ForEach(CommanderThemeID.allCases, id: \.self) { t in
@@ -216,6 +224,27 @@ public struct MainCommanderWindowView: View {
         .padding(.vertical, 4)
         .background(palette.toolbarBackground.swiftUIColor)
         .overlay(Divider(), alignment: .bottom)
+    }
+
+    private func quickToolButton(title: String, symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .bold))
+                Text(title)
+                    .font(.system(size: 10.5, weight: .bold))
+                    .lineLimit(1)
+            }
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Rectangle().fill(palette.toolbarBackground.swiftUIColor))
+            .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.8))
+            .foregroundColor(palette.regularFileText.swiftUIColor)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     /// Live icon for toggle-style toolbar commands.
@@ -413,6 +442,10 @@ public struct MainCommanderWindowView: View {
             FullDiskAccessSheetView(viewModel: viewModel)
         case .settings:
             SettingsSheetView(viewModel: viewModel)
+        case .cleanup:
+            CleanupSheetView(viewModel: viewModel)
+        case .emptyTrash:
+            EmptyTrashSheetView(viewModel: viewModel)
         case .deleteConfirm(let items, let permanent, let secureWipe):
             DeleteConfirmSheetView(viewModel: viewModel, items: items, permanent: permanent, secureWipe: secureWipe)
         case .renameTab(let side, let index):

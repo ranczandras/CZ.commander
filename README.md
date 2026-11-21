@@ -113,6 +113,8 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
 - **Archives**: create and extract `.zip` / `.tar` variants, browse archives inside the panel.
 - **Split & Combine** with `.crc` files, **checksums** (CRC32 `.sfv`, MD5, SHA-1, SHA-256, SHA-512), **encode / decode** (Base64, UUEncode, XXEncode).
 - **Attributes**: POSIX permissions, macOS locked / hidden flags, Finder tags, timestamps.
+- **Cleanup** (toolbar button, `Cmd+Opt+K`): scans the Trash, application and browser caches, logs, old temporary files, Xcode and developer-tool caches and large leftovers (device backups, installers in Downloads), groups them by category and deletes only what you tick. Regenerable data is ticked by default; anything that costs a long re-download or is not regenerated is marked "review first". What is scanned and what is never touched is documented in [docs/CLEANUP.md](docs/CLEANUP.md).
+- **Empty Trash** (toolbar button, `Cmd+Shift+Backspace`): shows how much is in the Trash (home and other drives) and deletes it after confirmation.
 - Properties & hash inspector, file list export (TXT, CSV, MD, HTML), disk space analyzer, FTP / SFTP connection manager.
 
 ## License

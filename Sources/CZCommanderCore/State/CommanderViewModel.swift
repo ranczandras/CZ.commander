@@ -1081,6 +1081,8 @@ public enum ActiveCommanderSheet: Identifiable {
     case buttonBarEditor
     case fullDiskAccess
     case settings
+    case cleanup
+    case emptyTrash
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
     case renameTab(side: PanelSide, index: Int)
 
@@ -1114,6 +1116,8 @@ public enum ActiveCommanderSheet: Identifiable {
         case .buttonBarEditor: return "buttonbareditor"
         case .fullDiskAccess: return "fulldiskaccess"
         case .settings: return "settings"
+        case .cleanup: return "cleanup"
+        case .emptyTrash: return "emptytrash"
         }
     }
 }
@@ -1326,6 +1330,10 @@ public final class CommanderViewModel: ObservableObject {
             isHorizontalSplit.toggle()
         case "cm_SwitchHidSys":
             showHiddenFiles.toggle()
+        case "cm_Cleanup":
+            activeSheet = .cleanup
+        case "cm_EmptyTrash":
+            activeSheet = .emptyTrash
         default:
             break
         }

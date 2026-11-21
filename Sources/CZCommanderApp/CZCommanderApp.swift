@@ -190,6 +190,18 @@ public struct CZCommanderMainApp: App {
                 viewModel.activeSheet = .backgroundTransferManager
             }
             Divider()
+            Button("Cleanup: Trash, Caches, Logs...") {
+                MainWindowController.show()
+                viewModel.activeSheet = .cleanup
+            }
+            .keyboardShortcut("k", modifiers: [.command, .option])
+
+            Button("Empty Trash...") {
+                MainWindowController.show()
+                viewModel.activeSheet = .emptyTrash
+            }
+            .keyboardShortcut(.delete, modifiers: [.command, .shift])
+            Divider()
             Button("Source <-> Target (Cmd+U)") {
                 viewModel.swapPanels()
             }

@@ -428,6 +428,19 @@ extension CZCommanderCoreTests {
     }
 }
 
+// MARK: - Cleanup commands
+
+extension CZCommanderCoreTests {
+    @MainActor func testCleanupCommandsOpenTheirDialogs() {
+        let vm = CommanderViewModel.shared
+        vm.executeInternalCommand("cm_Cleanup")
+        XCTAssertEqual(vm.activeSheet?.id, "cleanup")
+        vm.executeInternalCommand("cm_EmptyTrash")
+        XCTAssertEqual(vm.activeSheet?.id, "emptytrash", "Empty Trash asks before deleting anything")
+        vm.activeSheet = nil
+    }
+}
+
 // MARK: - Delete confirmation + right-click selection
 
 extension CZCommanderCoreTests {

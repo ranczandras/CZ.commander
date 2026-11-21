@@ -206,6 +206,8 @@ cat << 'PLIST' > "$CONTENTS_DIR/Info.plist"
     <string>CZ.commander needs access to your files and folders for file management.</string>
     <key>NSRemovableVolumesUsageDescription</key>
     <string>CZ.commander needs access to external drives and volumes for file management.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>CZ.commander asks Finder to empty the Trash when it has no Full Disk Access.</string>
     <key>NSNetworkVolumesUsageDescription</key>
     <string>CZ.commander needs access to network volumes for file management.</string>
 </dict>
