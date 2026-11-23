@@ -203,8 +203,7 @@ public struct CZCommanderMainApp: App {
             .keyboardShortcut(.delete, modifiers: [.command, .shift])
 
             Button("YouTube Downloader...") {
-                MainWindowController.show()
-                viewModel.activeSheet = .youtubeDownloader
+                YouTubeDownloaderWindowController.show(viewModel: viewModel)
             }
             .keyboardShortcut("y", modifiers: [.command, .option])
             Divider()
@@ -530,13 +529,14 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "multiRename": vm.activeSheet = .multiRename(items: Array(vm.activePanel.displayedItems.filter { !$0.isParentDirectoryEntry }.prefix(5)))
             case "findFiles": vm.activeSheet = .findFiles(initialPath: path)
             case "settings": vm.activeSheet = .settings
-            case "youtube": vm.activeSheet = .youtubeDownloader
+            case "youtube": YouTubeDownloaderWindowController.show(viewModel: vm)
             case "mkdir": vm.activeSheet = .mkdirDialog(baseDir: path)
             case "copy": vm.activeSheet = .copyDialog(sources: Array(vm.activePanel.displayedItems.suffix(2)), destinationDir: vm.inactivePanel.currentPath, isMove: false)
             default: break
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                if let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                let shotWindow = dialogs[i] == "youtube" ? (YouTubeDownloaderWindowController.window ?? window) : window
+                if let view = shotWindow.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: rep)
                     let url = URL(fileURLWithPath: dir).appendingPathComponent("dialog_\(dialogs[i]).png")
                     try? rep.representation(using: .png, properties: [:])?.write(to: url)
@@ -650,6 +650,11 @@ public final class CommanderKeyboardRouter {
         }
 
         let vm = viewModel ?? CommanderViewModel.shared
+
+        // The YouTube downloader window handles its own keys.
+        if let win = event.window, win === YouTubeDownloaderWindowController.window {
+            return false
+        }
 
         // 1. If a modal sheet is open: allow Esc to close it, otherwise let the sheet handle keys
         if vm.activeSheet != nil {

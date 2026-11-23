@@ -11,6 +11,8 @@ final class YouTubeDownloadEngineTests: XCTestCase {
         youtube.com/@SomeChannel
         not a link
         https://www.youtube.com/watch?v=vid&list=PL99
+        https://www.youtube.com/watch?v=k-k2_Liofy8&list=RDk-k2_Liofy8&start_radio=1
+        https://youtu.be/abc?list=PLshare
         """
         let links = YouTubeLinkParser.links(in: text)
         XCTAssertEqual(links.map(\.url), [
@@ -19,8 +21,10 @@ final class YouTubeDownloadEngineTests: XCTestCase {
             "https://www.youtube.com/playlist?list=PL42",
             "https://youtube.com/@SomeChannel",
             "https://www.youtube.com/watch?v=vid&list=PL99",
+            "https://www.youtube.com/watch?v=k-k2_Liofy8&list=RDk-k2_Liofy8&start_radio=1",
+            "https://youtu.be/abc?list=PLshare",
         ])
-        XCTAssertEqual(links.map(\.isPlaylist), [false, false, true, true, false])
+        XCTAssertEqual(links.map(\.isPlaylist), [false, false, true, true, true, false, true])
     }
 
     func testVideoArgumentsMergeBestStreamsIntoMP4() {

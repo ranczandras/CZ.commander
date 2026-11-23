@@ -95,20 +95,26 @@ public enum YouTubeLinkParser {
         return h == "youtu.be" || h == "youtube.com" || h.hasSuffix(".youtube.com")
     }
 
-    /// A watch link that also carries `list=` (a video opened from a playlist) downloads only
-    /// that video; `/playlist?list=…`, channel and other non-watch links download everything.
+    /// A link that carries `list=` downloads the whole playlist, also when it is a watch link
+    /// opened from that playlist. YouTube Mix / radio lists (`list=RD…`) are endless
+    /// auto-generated queues, so those download only the video itself.
     static func isPlaylist(_ comps: URLComponents) -> Bool {
         guard let host = comps.host, isYouTubeHost(host) else { return false }
         let path = comps.path.lowercased()
-        let items = comps.queryItems ?? []
-        let hasList = items.contains { $0.name == "list" && !($0.value ?? "").isEmpty }
+        let list = (comps.queryItems ?? []).first { $0.name == "list" }?.value ?? ""
+        if !list.isEmpty {
+            return !isMix(list)
+        }
         if host.lowercased() == "youtu.be" { return false }
-        if path.hasPrefix("/watch") || path.hasPrefix("/shorts/") || path.hasPrefix("/live/") { return false }
-        if path.hasPrefix("/playlist") { return hasList }
         if path.hasPrefix("/@") || path.hasPrefix("/channel/") || path.hasPrefix("/c/") || path.hasPrefix("/user/") {
             return true
         }
-        return hasList
+        return false
+    }
+
+    /// Mix / radio playlists ("RD…", "RDMM…", "RDAMVM…" etc.).
+    static func isMix(_ listID: String) -> Bool {
+        listID.hasPrefix("RD")
     }
 }
 

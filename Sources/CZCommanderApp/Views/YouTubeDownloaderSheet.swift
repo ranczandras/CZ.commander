@@ -327,6 +327,142 @@ final class YouTubeDownloadManager: ObservableObject {
 
 // MARK: - Window
 
+/// The downloader lives in its own movable, resizable window (not a modal sheet), so the
+/// file panels stay usable. Closing or hiding it keeps the downloads running.
+@MainActor
+enum YouTubeDownloaderWindowController {
+    static var window: NSWindow?
+
+    static func show(viewModel: CommanderViewModel? = nil) {
+        let viewModel = viewModel ?? CommanderViewModel.shared
+        if let window {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        let root = YouTubeDownloaderSheetView(viewModel: viewModel)
+            .frame(minWidth: 720, minHeight: 460)
+        let window = SquareCommanderWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 880, height: 640),
+            styleMask: [.borderless, .resizable, .miniaturizable, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "YouTube Downloader"
+        let host = NSHostingView(rootView: root)
+        host.sizingOptions = []
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 880, height: 640))
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        host.translatesAutoresizingMaskIntoConstraints = true
+        container.addSubview(host)
+        window.contentView = container
+        window.isReleasedWhenClosed = false
+        window.hasShadow = true
+        window.isOpaque = true
+        window.backgroundColor = .windowBackgroundColor
+        window.minSize = NSSize(width: 720, height: 460)
+        window.animationBehavior = .none
+        window.collectionBehavior = [.managed, .participatesInCycle]
+        if !window.setFrameUsingName("CZYouTubeDownloader") {
+            window.center()
+        }
+        window.setFrameAutosaveName("CZYouTubeDownloader")
+        Self.window = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    static func hide() { window?.orderOut(nil) }
+    static func minimize() { window?.miniaturize(nil) }
+
+    static func toggleZoom() {
+        guard let window, let screen = window.screen ?? NSScreen.main else { return }
+        window.setFrame(window.frame == screen.visibleFrame ? NSRect(x: 0, y: 0, width: 880, height: 640) : screen.visibleFrame, display: true)
+        if window.frame.width == 880 { window.center() }
+    }
+}
+
+/// Title bar for the downloader window: drag to move, square close (hide) / minimize / zoom.
+private struct YouTubeWindowTitleBar: View {
+    @State private var hovering = false
+
+    var body: some View {
+        ZStack {
+            YouTubeWindowDragArea()
+            HStack(spacing: 7) {
+                button(Color(red: 1.0, green: 0.37, blue: 0.34), "xmark", "Hide (downloads keep running)") {
+                    YouTubeDownloaderWindowController.hide()
+                }
+                button(Color(red: 1.0, green: 0.74, blue: 0.18), "minus", "Minimize") {
+                    YouTubeDownloaderWindowController.minimize()
+                }
+                button(Color(red: 0.16, green: 0.79, blue: 0.25), "arrow.up.left.and.arrow.down.right", "Zoom / restore") {
+                    YouTubeDownloaderWindowController.toggleZoom()
+                }
+                Spacer()
+            }
+            .padding(.leading, 10)
+            .onHover { hovering = $0 }
+            Text("YouTube Downloader")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+                .allowsHitTesting(false)
+        }
+        .frame(height: 26)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .overlay(Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1), alignment: .bottom)
+    }
+
+    private func button(_ color: Color, _ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Rectangle().fill(color)
+                Rectangle().stroke(Color.black.opacity(0.18), lineWidth: 0.5)
+                if hovering {
+                    Image(systemName: symbol)
+                        .font(.system(size: 7, weight: .black))
+                        .foregroundColor(.black.opacity(0.6))
+                }
+            }
+            .frame(width: 12, height: 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+private struct YouTubeWindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 {
+                MainActor.assumeIsolated { YouTubeDownloaderWindowController.toggleZoom() }
+            } else {
+                window?.performDrag(with: event)
+            }
+        }
+    }
+}
+
+/// Placed in the main window's sheet slot when `.youtubeDownloader` is requested (menu
+/// command, button bar): opens the separate window instead of a modal sheet.
+struct YouTubeDownloaderLauncher: View {
+    @ObservedObject var viewModel: CommanderViewModel
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .onAppear {
+                viewModel.activeSheet = nil
+                YouTubeDownloaderWindowController.show(viewModel: viewModel)
+            }
+    }
+}
+
 struct YouTubeDownloaderSheetView: View {
     @ObservedObject var viewModel: CommanderViewModel
     @ObservedObject private var manager = YouTubeDownloadManager.shared
@@ -334,14 +470,19 @@ struct YouTubeDownloaderSheetView: View {
     @State private var notice: String? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-            input
-            queue
-            footer
+        VStack(spacing: 0) {
+            YouTubeWindowTitleBar()
+            VStack(alignment: .leading, spacing: 10) {
+                header
+                input
+                queue
+                footer
+            }
+            .padding(18)
         }
-        .padding(18)
-        .frame(width: 860, height: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onExitCommand { YouTubeDownloaderWindowController.hide() }
         .onAppear {
             manager.refreshToolchain()
             let vm = viewModel
@@ -517,22 +658,23 @@ struct YouTubeDownloaderSheetView: View {
             }
             Spacer()
             if manager.hasActiveJobs {
-                Text("Downloads keep running when this window is closed.")
+                Text("Downloads keep running when this window is hidden.")
                     .font(.system(size: 10.5))
                     .foregroundColor(.secondary)
                 Button("Stop All") { manager.cancelAll() }
             }
             Button("Clear Finished") { manager.clearFinished() }
                 .disabled(!manager.jobs.contains { !$0.isActive })
-            Button("Close") { CommanderDialog.close(viewModel) }
+            Button("Hide") { YouTubeDownloaderWindowController.hide() }
                 .keyboardShortcut(.cancelAction)
+                .help("Hide the window; downloads keep running (Cmd+Opt+Y brings it back)")
         }
     }
 
     private func openFolderInPanel() {
         try? FileManager.default.createDirectory(atPath: manager.outputDirectory, withIntermediateDirectories: true)
         viewModel.activePanel.navigateTo(path: manager.outputDirectory)
-        CommanderDialog.close(viewModel)
+        MainWindowController.show()
     }
 
     private func abbreviated(_ path: String) -> String {
@@ -662,6 +804,6 @@ private struct YouTubeJobRow: View {
     private func showInPanel(_ path: String) {
         let folder = (path as NSString).deletingLastPathComponent
         viewModel.activePanel.navigateTo(path: folder, selectingChildNamed: (path as NSString).lastPathComponent)
-        CommanderDialog.close(viewModel)
+        MainWindowController.show()
     }
 }
