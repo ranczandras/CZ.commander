@@ -331,121 +331,18 @@ final class YouTubeDownloadManager: ObservableObject {
 /// file panels stay usable. Closing or hiding it keeps the downloads running.
 @MainActor
 enum YouTubeDownloaderWindowController {
-    static var window: NSWindow?
+    static let id = "youtube"
+    static var window: NSWindow? { AuxWindow.window(id) }
 
     static func show(viewModel: CommanderViewModel? = nil) {
-        let viewModel = viewModel ?? CommanderViewModel.shared
-        if let window {
-            if window.isMiniaturized { window.deminiaturize(nil) }
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        let root = YouTubeDownloaderSheetView(viewModel: viewModel)
-            .frame(minWidth: 720, minHeight: 460)
-        let window = SquareCommanderWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 880, height: 640),
-            styleMask: [.borderless, .resizable, .miniaturizable, .closable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "YouTube Downloader"
-        let host = NSHostingView(rootView: root)
-        host.sizingOptions = []
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 880, height: 640))
-        host.frame = container.bounds
-        host.autoresizingMask = [.width, .height]
-        host.translatesAutoresizingMaskIntoConstraints = true
-        container.addSubview(host)
-        window.contentView = container
-        window.isReleasedWhenClosed = false
-        window.hasShadow = true
-        window.isOpaque = true
-        window.backgroundColor = .windowBackgroundColor
-        window.minSize = NSSize(width: 720, height: 460)
-        window.animationBehavior = .none
-        window.collectionBehavior = [.managed, .participatesInCycle]
-        if !window.setFrameUsingName("CZYouTubeDownloader") {
-            window.center()
-        }
-        window.setFrameAutosaveName("CZYouTubeDownloader")
-        Self.window = window
-        window.makeKeyAndOrderFront(nil)
-    }
-
-    static func hide() { window?.orderOut(nil) }
-    static func minimize() { window?.miniaturize(nil) }
-
-    static func toggleZoom() {
-        guard let window, let screen = window.screen ?? NSScreen.main else { return }
-        window.setFrame(window.frame == screen.visibleFrame ? NSRect(x: 0, y: 0, width: 880, height: 640) : screen.visibleFrame, display: true)
-        if window.frame.width == 880 { window.center() }
-    }
-}
-
-/// Title bar for the downloader window: drag to move, square close (hide) / minimize / zoom.
-private struct YouTubeWindowTitleBar: View {
-    @State private var hovering = false
-
-    var body: some View {
-        ZStack {
-            YouTubeWindowDragArea()
-            HStack(spacing: 7) {
-                button(Color(red: 1.0, green: 0.37, blue: 0.34), "xmark", "Hide (downloads keep running)") {
-                    YouTubeDownloaderWindowController.hide()
-                }
-                button(Color(red: 1.0, green: 0.74, blue: 0.18), "minus", "Minimize") {
-                    YouTubeDownloaderWindowController.minimize()
-                }
-                button(Color(red: 0.16, green: 0.79, blue: 0.25), "arrow.up.left.and.arrow.down.right", "Zoom / restore") {
-                    YouTubeDownloaderWindowController.toggleZoom()
-                }
-                Spacer()
-            }
-            .padding(.leading, 10)
-            .onHover { hovering = $0 }
-            Text("YouTube Downloader")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-                .allowsHitTesting(false)
-        }
-        .frame(height: 26)
-        .background(Color(nsColor: .windowBackgroundColor))
-        .overlay(Rectangle().fill(Color(nsColor: .separatorColor)).frame(height: 1), alignment: .bottom)
-    }
-
-    private func button(_ color: Color, _ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Rectangle().fill(color)
-                Rectangle().stroke(Color.black.opacity(0.18), lineWidth: 0.5)
-                if hovering {
-                    Image(systemName: symbol)
-                        .font(.system(size: 7, weight: .black))
-                        .foregroundColor(.black.opacity(0.6))
-                }
-            }
-            .frame(width: 12, height: 12)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(help)
-    }
-}
-
-private struct YouTubeWindowDragArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { DragView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
-
-    final class DragView: NSView {
-        override var mouseDownCanMoveWindow: Bool { true }
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount == 2 {
-                MainActor.assumeIsolated { YouTubeDownloaderWindowController.toggleZoom() }
-            } else {
-                window?.performDrag(with: event)
-            }
+        let vm = viewModel ?? CommanderViewModel.shared
+        AuxWindow.show(id: id, title: "YouTube Downloader", size: NSSize(width: 880, height: 640),
+                       minSize: NSSize(width: 720, height: 460)) {
+            YouTubeDownloaderSheetView(viewModel: vm)
         }
     }
+
+    static func hide() { AuxWindow.hide(id) }
 }
 
 /// Placed in the main window's sheet slot when `.youtubeDownloader` is requested (menu
@@ -470,18 +367,14 @@ struct YouTubeDownloaderSheetView: View {
     @State private var notice: String? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            YouTubeWindowTitleBar()
-            VStack(alignment: .leading, spacing: 10) {
-                header
-                input
-                queue
-                footer
-            }
-            .padding(18)
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            input
+            queue
+            footer
         }
+        .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .windowBackgroundColor))
         .onExitCommand { YouTubeDownloaderWindowController.hide() }
         .onAppear {
             manager.refreshToolchain()

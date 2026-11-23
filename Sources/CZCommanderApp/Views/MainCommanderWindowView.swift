@@ -168,6 +168,9 @@ public struct MainCommanderWindowView: View {
             quickToolButton(title: "YouTube", symbol: "play.rectangle", help: "YouTube Downloader: videos and playlists to MP4 or MP3 (Cmd+Opt+Y)") {
                 YouTubeDownloaderWindowController.show(viewModel: viewModel)
             }
+            quickToolButton(title: "Uninstall", symbol: "xmark.bin", help: "Uninstall an app and everything it left behind (Cmd+Opt+U)") {
+                AppUninstallerWindowController.show(viewModel: viewModel)
+            }
 
             // Theme Quick Menu
             Menu {
@@ -451,6 +454,8 @@ public struct MainCommanderWindowView: View {
             EmptyTrashSheetView(viewModel: viewModel)
         case .youtubeDownloader:
             YouTubeDownloaderLauncher(viewModel: viewModel)
+        case .appUninstaller:
+            AppUninstallerLauncher(viewModel: viewModel)
         case .deleteConfirm(let items, let permanent, let secureWipe):
             DeleteConfirmSheetView(viewModel: viewModel, items: items, permanent: permanent, secureWipe: secureWipe)
         case .renameTab(let side, let index):

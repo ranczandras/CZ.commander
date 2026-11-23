@@ -206,6 +206,11 @@ public struct CZCommanderMainApp: App {
                 YouTubeDownloaderWindowController.show(viewModel: viewModel)
             }
             .keyboardShortcut("y", modifiers: [.command, .option])
+
+            Button("Uninstall App...") {
+                AppUninstallerWindowController.show(viewModel: viewModel)
+            }
+            .keyboardShortcut("u", modifiers: [.command, .option])
             Divider()
             Button("Source <-> Target (Cmd+U)") {
                 viewModel.swapPanels()
@@ -530,12 +535,16 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "findFiles": vm.activeSheet = .findFiles(initialPath: path)
             case "settings": vm.activeSheet = .settings
             case "youtube": YouTubeDownloaderWindowController.show(viewModel: vm)
+            case "uninstaller":
+                AppUninstallerWindowController.show(viewModel: vm)
+                // CZ_UNINSTALL_APP=/Applications/X.app preselects an app (read-only preview).
+                if let app = env["CZ_UNINSTALL_APP"] { AppUninstallerSession.shared.select(path: app) }
             case "mkdir": vm.activeSheet = .mkdirDialog(baseDir: path)
             case "copy": vm.activeSheet = .copyDialog(sources: Array(vm.activePanel.displayedItems.suffix(2)), destinationDir: vm.inactivePanel.currentPath, isMove: false)
             default: break
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                let shotWindow = dialogs[i] == "youtube" ? (YouTubeDownloaderWindowController.window ?? window) : window
+            DispatchQueue.main.asyncAfter(deadline: .now() + (dialogs[i] == "uninstaller" ? 6.0 : 1.0)) {
+                let shotWindow = AuxWindow.window(dialogs[i] == "youtube" ? "youtube" : dialogs[i]) ?? window
                 if let view = shotWindow.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: rep)
                     let url = URL(fileURLWithPath: dir).appendingPathComponent("dialog_\(dialogs[i]).png")
@@ -651,8 +660,8 @@ public final class CommanderKeyboardRouter {
 
         let vm = viewModel ?? CommanderViewModel.shared
 
-        // The YouTube downloader window handles its own keys.
-        if let win = event.window, win === YouTubeDownloaderWindowController.window {
+        // Tool windows (YouTube, Uninstaller) handle their own keys.
+        if let win = event.window, AuxWindow.isAuxWindow(win) {
             return false
         }
 
