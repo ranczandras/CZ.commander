@@ -108,3 +108,24 @@ final class YouTubeDownloadEngineTests: XCTestCase {
         return args[i + 1]
     }
 }
+
+final class YouTubeLoginTests: XCTestCase {
+    func testLoginAddsCookiesAndPrefersBitrate() {
+        let chain = YouTubeToolchain(ytDlp: "/t/yt-dlp", ffmpeg: "/t/ffmpeg", ffprobe: "/t/ffprobe", jsRuntime: .deno("/t/deno"))
+        let playlist = YouTubeLink(url: "https://www.youtube.com/playlist?list=PL1", isPlaylist: true)
+        let args = YouTubeCommand.arguments(for: playlist, kind: .video, outputDirectory: "/out", toolchain: chain, login: .chrome)
+        XCTAssertEqual(args[args.firstIndex(of: "--cookies-from-browser")! + 1], "chrome")
+        XCTAssertEqual(args[args.firstIndex(of: "-S")! + 1], "res,fps,vbr,vcodec:h264,acodec:aac")
+        XCTAssertTrue(args.contains("--sleep-interval"))
+
+        let plain = YouTubeCommand.arguments(for: playlist, kind: .video, outputDirectory: "/out", toolchain: chain)
+        XCTAssertFalse(plain.contains("--cookies-from-browser"))
+        XCTAssertFalse(plain.contains("--sleep-interval"))
+        XCTAssertEqual(Array(plain.suffix(2)), ["--", playlist.url])
+    }
+
+    func testNeedsLoginDetection() {
+        XCTAssertTrue(YouTubeOutputParser.needsLogin("[youtube] JBVr0GgDfi4: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies"))
+        XCTAssertFalse(YouTubeOutputParser.needsLogin("[youtube] x: Video unavailable"))
+    }
+}

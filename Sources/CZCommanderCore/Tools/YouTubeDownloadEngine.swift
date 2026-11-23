@@ -17,6 +17,45 @@ public enum YouTubeMediaKind: String, Codable, CaseIterable, Sendable {
     public var fileExtension: String { self == .video ? "mp4" : "mp3" }
 }
 
+// MARK: - Login
+
+/// Where yt-dlp takes the YouTube login from (`--cookies-from-browser`). No password is ever
+/// asked for: the browser's existing YouTube session is used.
+public enum YouTubeLoginBrowser: String, Codable, CaseIterable, Sendable {
+    case none, safari, chrome, firefox, brave, edge, vivaldi, opera, chromium
+
+    public var title: String {
+        switch self {
+        case .none: return "Not logged in"
+        case .safari: return "Safari"
+        case .chrome: return "Chrome"
+        case .firefox: return "Firefox"
+        case .brave: return "Brave"
+        case .edge: return "Edge"
+        case .vivaldi: return "Vivaldi"
+        case .opera: return "Opera"
+        case .chromium: return "Chromium"
+        }
+    }
+
+    /// Value for `--cookies-from-browser`.
+    public var ytDlpName: String? { self == .none ? nil : rawValue }
+
+    public var bundleIdentifier: String? {
+        switch self {
+        case .none: return nil
+        case .safari: return "com.apple.Safari"
+        case .chrome: return "com.google.Chrome"
+        case .firefox: return "org.mozilla.firefox"
+        case .brave: return "com.brave.Browser"
+        case .edge: return "com.microsoft.edgemac"
+        case .vivaldi: return "com.vivaldi.Vivaldi"
+        case .opera: return "com.operasoftware.Opera"
+        case .chromium: return "org.chromium.Chromium"
+        }
+    }
+}
+
 // MARK: - Links
 
 public struct YouTubeLink: Equatable, Sendable {
@@ -416,7 +455,7 @@ public enum YouTubeCommand {
 
     /// Arguments for one link. Output goes to `outputDirectory`; a playlist gets its own
     /// sub-folder with numbered files.
-    public static func arguments(for link: YouTubeLink, kind: YouTubeMediaKind, outputDirectory: String, toolchain: YouTubeToolchain) -> [String] {
+    public static func arguments(for link: YouTubeLink, kind: YouTubeMediaKind, outputDirectory: String, toolchain: YouTubeToolchain, login: YouTubeLoginBrowser = .none) -> [String] {
         var args: [String] = [
             "--newline",
             "--color", "never",
@@ -447,19 +486,31 @@ public enum YouTubeCommand {
         if let js = toolchain.jsRuntime {
             args += ["--js-runtimes", js.argument]
         }
+        if let browser = login.ytDlpName {
+            args += ["--cookies-from-browser", browser]
+            // Go easy on a logged-in account: Google may flag bulk downloads.
+            args += ["--sleep-requests", "0.75"]
+            if link.isPlaylist {
+                args += ["--sleep-interval", "3", "--max-sleep-interval", "8"]
+            }
+        }
         switch kind {
         case .video:
             // Highest resolution and frame rate first; at equal resolution H.264 + AAC wins
             // (plays everywhere, QuickTime included). 4K and up only exist as VP9 / AV1.
+            // Logged in, the higher bitrate wins first, so YouTube Premium's
+            // "1080p Premium" (enhanced bitrate) stream is picked when the account has it.
             args += [
                 "-f", "bv*+ba/b",
-                "-S", "res,fps,vcodec:h264,acodec:aac",
+                "-S", login == .none ? "res,fps,vcodec:h264,acodec:aac" : "res,fps,vbr,vcodec:h264,acodec:aac",
                 "--merge-output-format", "mp4",
                 "--embed-chapters",
             ]
         case .audio:
             args += [
                 "-f", "ba/b",
+                // Highest audio bitrate as the MP3 source (256 kbps AAC with Premium).
+                "-S", "abr,asr",
                 "--extract-audio",
                 "--audio-format", "mp3",
                 "--audio-quality", "0",
@@ -482,6 +533,15 @@ public enum YouTubeOutputEvent: Equatable, Sendable {
 }
 
 public enum YouTubeOutputParser {
+    /// YouTube refused without a login ("Sign in to confirm you're not a bot", age limit,
+    /// members-only, private playlist).
+    public static func needsLogin(_ message: String) -> Bool {
+        let m = message.lowercased()
+        return m.contains("sign in to confirm") || m.contains("--cookies-from-browser")
+            || m.contains("login required") || m.contains("members-only")
+            || m.contains("private video") || m.contains("this playlist is private")
+    }
+
     public static func parse(_ rawLine: String) -> YouTubeOutputEvent {
         let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r\n"))
         if line.hasPrefix(YouTubeCommand.progressPrefix) {

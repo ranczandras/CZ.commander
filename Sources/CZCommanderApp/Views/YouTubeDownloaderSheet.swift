@@ -78,6 +78,17 @@ final class YouTubeDownloadManager: ObservableObject {
     @Published var kind: YouTubeMediaKind {
         didSet { UserDefaults.standard.set(kind.rawValue, forKey: "YouTubeDownloaderKind") }
     }
+    @Published var login: YouTubeLoginBrowser {
+        didSet { UserDefaults.standard.set(login.rawValue, forKey: "YouTubeDownloaderLogin") }
+    }
+
+    /// "Not logged in" plus the browsers installed on this Mac.
+    var loginChoices: [YouTubeLoginBrowser] {
+        YouTubeLoginBrowser.allCases.filter { browser in
+            guard let id = browser.bundleIdentifier else { return true }
+            return browser == login || NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
+        }
+    }
 
     /// Called with the output folder whenever a download finished (panels refresh).
     var onFilesChanged: ((String) -> Void)?
@@ -90,6 +101,7 @@ final class YouTubeDownloadManager: ObservableObject {
         toolchain = YouTubeToolchain()
         let saved = UserDefaults.standard.string(forKey: "YouTubeDownloaderKind")
         kind = saved.flatMap(YouTubeMediaKind.init(rawValue:)) ?? .video
+        login = UserDefaults.standard.string(forKey: "YouTubeDownloaderLogin").flatMap(YouTubeLoginBrowser.init(rawValue:)) ?? .none
         refreshToolchain()
         // yt-dlp would keep running as an orphan after the app quits.
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
@@ -229,7 +241,7 @@ final class YouTubeDownloadManager: ObservableObject {
 
         let p = Process()
         p.executableURL = URL(fileURLWithPath: ytDlp)
-        p.arguments = YouTubeCommand.arguments(for: job.link, kind: job.kind, outputDirectory: outputDirectory, toolchain: chain)
+        p.arguments = YouTubeCommand.arguments(for: job.link, kind: job.kind, outputDirectory: outputDirectory, toolchain: chain, login: login)
         p.environment = YouTubeProcess.environment(toolchain: chain)
         p.currentDirectoryURL = URL(fileURLWithPath: outputDirectory)
         p.standardInput = FileHandle.nullDevice
@@ -427,7 +439,35 @@ struct YouTubeDownloaderSheetView: View {
                     .disabled(linkText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("Download (Cmd+Return)")
             }
+            HStack(spacing: 10) {
+                SquarePicker("YouTube login:", selection: $manager.login,
+                             options: manager.loginChoices.map { ($0, $0.title) })
+                    .font(.system(size: 11))
+                    .frame(width: 240)
+                    .help(loginHelp)
+                Text(manager.login == .none
+                     ? "Off. Turn on for bot checks, private lists and Premium quality."
+                     : "Uses your YouTube login in \(manager.login.title) (Premium quality if the account has it).")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(.secondary)
+                    .help(loginHelp)
+                Spacer()
+                if manager.login == .safari && !FullDiskAccessHelper.hasFullDiskAccess() {
+                    Button("Safari login needs Full Disk Access…") { viewModel.activeSheet = .fullDiskAccess }
+                        .foregroundColor(.orange)
+                }
+            }
         }
+    }
+
+    private var loginHelp: String {
+        """
+        Uses the YouTube login of the chosen browser (no password is asked for). \
+        Needed for "Sign in to confirm you're not a bot", age-restricted, members-only and private videos, \
+        Watch Later / Liked lists, and YouTube Premium quality (1080p Premium, 256 kbps audio).
+        Chrome-based browsers: macOS asks once for Keychain access. Safari: needs Full Disk Access.
+        Google may limit accounts that download a lot; very large playlists are better without login.
+        """
     }
 
     private func startDownload() {
@@ -563,7 +603,15 @@ private struct YouTubeJobRow: View {
                 : "Done: \(job.files.count) file(s)" + (failed > 0 ? ", \(failed) item(s) failed: " + (job.errors.last ?? "") : ".")
             label(text, color: failed > 0 ? .orange : .green)
         case .failed(let message):
-            label("Failed: " + message, color: .red)
+            VStack(alignment: .leading, spacing: 2) {
+                label("Failed: " + message, color: .red)
+                if YouTubeOutputParser.needsLogin(message) {
+                    label(manager.login == .none
+                          ? "YouTube wants a login: choose your browser at \"YouTube login\" above, then Retry."
+                          : "Still refused: make sure you are signed in to YouTube in \(manager.login.title), then Retry.",
+                          color: .orange)
+                }
+            }
         case .cancelled:
             label("Stopped.", color: .secondary)
         }
