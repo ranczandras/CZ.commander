@@ -201,6 +201,12 @@ public struct CZCommanderMainApp: App {
                 viewModel.activeSheet = .emptyTrash
             }
             .keyboardShortcut(.delete, modifiers: [.command, .shift])
+
+            Button("YouTube Downloader...") {
+                MainWindowController.show()
+                viewModel.activeSheet = .youtubeDownloader
+            }
+            .keyboardShortcut("y", modifiers: [.command, .option])
             Divider()
             Button("Source <-> Target (Cmd+U)") {
                 viewModel.swapPanels()
@@ -524,6 +530,7 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "multiRename": vm.activeSheet = .multiRename(items: Array(vm.activePanel.displayedItems.filter { !$0.isParentDirectoryEntry }.prefix(5)))
             case "findFiles": vm.activeSheet = .findFiles(initialPath: path)
             case "settings": vm.activeSheet = .settings
+            case "youtube": vm.activeSheet = .youtubeDownloader
             case "mkdir": vm.activeSheet = .mkdirDialog(baseDir: path)
             case "copy": vm.activeSheet = .copyDialog(sources: Array(vm.activePanel.displayedItems.suffix(2)), destinationDir: vm.inactivePanel.currentPath, isMove: false)
             default: break

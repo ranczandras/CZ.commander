@@ -165,6 +165,9 @@ public struct MainCommanderWindowView: View {
             quickToolButton(title: "Empty Trash", symbol: "trash", help: "Empty Trash (Cmd+Shift+Backspace)") {
                 viewModel.activeSheet = .emptyTrash
             }
+            quickToolButton(title: "YouTube", symbol: "play.rectangle", help: "YouTube Downloader: videos and playlists to MP4 or MP3 (Cmd+Opt+Y)") {
+                viewModel.activeSheet = .youtubeDownloader
+            }
 
             // Theme Quick Menu
             Menu {
@@ -446,6 +449,8 @@ public struct MainCommanderWindowView: View {
             CleanupSheetView(viewModel: viewModel)
         case .emptyTrash:
             EmptyTrashSheetView(viewModel: viewModel)
+        case .youtubeDownloader:
+            YouTubeDownloaderSheetView(viewModel: viewModel)
         case .deleteConfirm(let items, let permanent, let secureWipe):
             DeleteConfirmSheetView(viewModel: viewModel, items: items, permanent: permanent, secureWipe: secureWipe)
         case .renameTab(let side, let index):

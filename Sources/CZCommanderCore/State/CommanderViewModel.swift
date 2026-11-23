@@ -1083,6 +1083,7 @@ public enum ActiveCommanderSheet: Identifiable {
     case settings
     case cleanup
     case emptyTrash
+    case youtubeDownloader
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
     case renameTab(side: PanelSide, index: Int)
 
@@ -1118,6 +1119,7 @@ public enum ActiveCommanderSheet: Identifiable {
         case .settings: return "settings"
         case .cleanup: return "cleanup"
         case .emptyTrash: return "emptytrash"
+        case .youtubeDownloader: return "youtubedownloader"
         }
     }
 }
@@ -1334,6 +1336,8 @@ public final class CommanderViewModel: ObservableObject {
             activeSheet = .cleanup
         case "cm_EmptyTrash":
             activeSheet = .emptyTrash
+        case "cm_YouTubeDownloader":
+            activeSheet = .youtubeDownloader
         default:
             break
         }
