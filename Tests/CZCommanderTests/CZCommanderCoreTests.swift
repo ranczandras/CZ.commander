@@ -435,6 +435,8 @@ extension CZCommanderCoreTests {
         let vm = CommanderViewModel.shared
         vm.executeInternalCommand("cm_Cleanup")
         XCTAssertEqual(vm.activeSheet?.id, "cleanup")
+        vm.executeInternalCommand("cm_Startup")
+        XCTAssertEqual(vm.activeSheet?.id, "startup")
         vm.executeInternalCommand("cm_EmptyTrash")
         XCTAssertEqual(vm.activeSheet?.id, "emptytrash", "Empty Trash asks before deleting anything")
         vm.activeSheet = nil
