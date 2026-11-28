@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Quartz
 import IOKit
 import CZCommanderCore
 
@@ -369,6 +370,19 @@ public final class CommanderKeyCaptureNSView: NSView {
         }
         return super.performKeyEquivalent(with: event)
     }
+
+    // Quick Look asks the responder chain who controls the preview panel.
+    public override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+
+    public override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        panel.dataSource = QuickLookController.shared
+        panel.delegate = QuickLookController.shared
+    }
+
+    public override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        if panel.dataSource is QuickLookController { panel.dataSource = nil }
+        if panel.delegate is QuickLookController { panel.delegate = nil }
+    }
 }
 
 // MARK: - AppKit Delegate & Centralized Keyboard Router
@@ -569,7 +583,34 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (env["CZ_SNAPSHOT_PATH"] == nil ? 2.0 : 5.0)) { shoot(0) }
+        // CZ_SNAPSHOT_TYPE=text posts real key-down events to the main window (quick search test);
+        // "<" stands for Backspace. CZ_SNAPSHOT_TYPE_INFO lines go to window_info.txt.
+        if let typed = env["CZ_SNAPSHOT_TYPE"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                guard let window = MainWindowController.window else { return }
+                for (n, ch) in typed.enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(n) * 0.15) {
+                        let isBack = ch == "<"
+                        let isF3 = ch == "|"
+                        let text = isBack ? "\u{7F}" : (isF3 ? "\u{F706}" : String(ch))
+                        if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: window.windowNumber, context: nil, characters: text,
+                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: isBack ? 51 : (isF3 ? 99 : 0)) {
+                            NSApp.postEvent(ev, atStart: false)
+                        }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(typed.count) * 0.15 + 0.5) {
+                    let p = CommanderViewModel.shared.activePanel
+                    let line = "typed=\(typed) filter=\(p.activeTab.quickFilter) visible=\(p.isQuickFilterVisible) items=\(p.displayedItems.count) cursor=\(p.cursorIndex) quickLook=\(QuickLookController.shared.isOpen) firstResponder=\(String(describing: window.firstResponder.map { type(of: $0) }))\n"
+                    let info = (dir as NSString).appendingPathComponent("typed_info.txt")
+                    if !FileManager.default.fileExists(atPath: info) { FileManager.default.createFile(atPath: info, contents: nil) }
+                    if let h = FileHandle(forWritingAtPath: info) { h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); h.closeFile() }
+                }
+            }
+        }
+        let typeDelay = env["CZ_SNAPSHOT_TYPE"].map { 3.0 + Double($0.count) * 0.15 + 1.5 } ?? 0
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(typeDelay, env["CZ_SNAPSHOT_PATH"] == nil ? 2.0 : 5.0)) { shoot(0) }
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -660,6 +701,15 @@ public final class CommanderKeyboardRouter {
 
         let vm = viewModel ?? CommanderViewModel.shared
 
+        // Quick Look preview (F3 on media) is key: Esc / F3 / Space close it, arrows follow the panel.
+        if QuickLookController.shared.isPreviewPanel(event.window) {
+            if QuickLookController.shared.handleKey(event, viewModel: vm) {
+                lastHandledTimestamp = event.timestamp
+                return true
+            }
+            return false
+        }
+
         // Tool windows (YouTube, Uninstaller) handle their own keys.
         if let win = event.window, AuxWindow.isAuxWindow(win) {
             return false
@@ -725,6 +775,28 @@ public final class CommanderKeyboardRouter {
                 126, 125, 116, 121, 115, 119, 36, 76, 48,
                 120, 99, 118, 96, 97, 98, 100, 101
             ]
+            // Quick search: while the filter is open and the panel (not the text field) has the
+            // keyboard, typed characters and Backspace edit the filter directly.
+            let typingInField = (event.window?.firstResponder as? NSTextView) != nil
+            if panel.isQuickFilterVisible && !typingInField {
+                let mods = event.modifierFlags.intersection([.command, .control, .option])
+                if mods.isEmpty {
+                    if event.keyCode == 51 { // Backspace
+                        var text = panel.activeTab.quickFilter
+                        if !text.isEmpty { text.removeLast() }
+                        setQuickSearch(text, on: panel)
+                        lastHandledTimestamp = event.timestamp
+                        return true
+                    }
+                    if !navAndFnKeyCodes.contains(event.keyCode), event.specialKey == nil,
+                       let chars = event.characters, !chars.isEmpty,
+                       chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
+                        setQuickSearch(panel.activeTab.quickFilter + chars, on: panel)
+                        lastHandledTimestamp = event.timestamp
+                        return true
+                    }
+                }
+            }
             if !navAndFnKeyCodes.contains(event.keyCode) && event.specialKey == nil {
                 return false
             }
@@ -1103,6 +1175,35 @@ public final class CommanderKeyboardRouter {
             }
         }
 
+        // Quick search (Total Commander "Letters - with search dialog"): typing a letter in the
+        // panel opens the filter with it; the list keeps the names that contain the typed text
+        // anywhere (not only at the start).
+        if !isCommand && !isControl && !isOption, let chars = event.characters, chars.count == 1,
+           let ch = chars.first, Self.startsQuickSearch(ch) {
+            setQuickSearch(chars, on: panel)
+            lastHandledTimestamp = event.timestamp
+            return true
+        }
+
         return false
+    }
+
+    /// Characters that open quick search. "+ - * /" and "=" keep their selection meaning,
+    /// space selects, digits 2-9 are the MacBook F-key equivalents (handled earlier).
+    static func startsQuickSearch(_ ch: Character) -> Bool {
+        if ch.isLetter || ch.isNumber { return true }
+        return "._()[]{}@#&!~'$%^,;".contains(ch)
+    }
+
+    /// Sets the quick-search text of `panel`; empty text closes the filter. The cursor goes to
+    /// the first match.
+    func setQuickSearch(_ text: String, on panel: PanelController) {
+        panel.activeTab.quickFilter = text
+        panel.isQuickFilterVisible = !text.isEmpty
+        panel.applySortAndFilter()
+        if !text.isEmpty, let first = panel.displayedItems.firstIndex(where: { !$0.isParentDirectoryEntry }) {
+            panel.setCursor(to: first, scrollIntoView: true)
+        }
+        if text.isEmpty { focusKeyCaptureView() }
     }
 }

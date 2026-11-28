@@ -52,6 +52,8 @@ public struct FilePanelView: View {
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     guard let fileURL = url else { return }
                     DispatchQueue.main.async {
+                        // Dropped back where it came from: nothing to copy.
+                        if (fileURL.path as NSString).deletingLastPathComponent == self.panel.currentPath { return }
                         _ = try? FileSystemEngine.copyOrMoveItems(
                             sources: [fileURL.path],
                             toDestinationDirectory: self.panel.currentPath,
@@ -776,10 +778,10 @@ public struct FilePanelView: View {
         HStack(spacing: 6) {
             Image(systemName: "line.3.horizontal.decrease.circle.fill")
                 .foregroundColor(palette.cursorBorder.swiftUIColor)
-            Text("Quick Filter:")
+            Text("Search:")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(palette.regularFileText.swiftUIColor)
-            TextField("Filter e.g. *.swift or substring...", text: Binding(
+            TextField("Type to filter: any part of the name, or *.swift", text: Binding(
                 get: { panel.activeTab.quickFilter },
                 set: { newVal in
                     panel.activeTab.quickFilter = newVal

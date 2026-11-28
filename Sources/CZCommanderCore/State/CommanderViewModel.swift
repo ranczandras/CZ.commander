@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import UniformTypeIdentifiers
 
 public enum PanelSide: String, Codable, Sendable {
     case left = "left"
@@ -337,6 +338,14 @@ public final class PanelController: ObservableObject {
 
     public func moveCursor(by delta: Int) {
         setCursor(to: cursorIndex + delta, scrollIntoView: true)
+    }
+
+    /// Image, video or audio file on disk (shown with Quick Look on F3).
+    nonisolated public static func isQuickLookMedia(_ item: FileItem) -> Bool {
+        guard !item.isDirectory, !item.isParentDirectoryEntry, item.archiveContainerPath == nil else { return false }
+        let ext = (item.name as NSString).pathExtension
+        guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .audiovisualContent)
     }
 
     public var focusedItem: FileItem? {
@@ -1349,7 +1358,13 @@ public final class CommanderViewModel: ObservableObject {
 
     // MARK: - F3 .. F8 Actions
 
+    /// Set by the app: F3 on image / audio / video opens Quick Look; returns true when handled.
+    public var mediaPreviewHandler: ((PanelController) -> Bool)?
+
     public func triggerF3View(initialMode: ListerMode = .text) {
+        if initialMode == .text, let handler = mediaPreviewHandler, handler(activePanel) {
+            return
+        }
         guard let item = activePanel.actionableItems.first else {
             activeSheet = .diskSpaceAnalyzer(path: activePanel.currentPath)
             return

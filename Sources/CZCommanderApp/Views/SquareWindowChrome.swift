@@ -31,6 +31,7 @@ enum MainWindowController {
             .background(CommanderKeyCaptureView())
             .onAppear {
                 CommanderKeyboardRouter.shared.viewModel = viewModel
+                viewModel.mediaPreviewHandler = { panel in QuickLookController.shared.previewMedia(in: panel) }
                 CommanderKeyboardRouter.shared.installMonitorsIfNeeded()
                 CommanderKeyboardRouter.shared.focusKeyCaptureView()
             }

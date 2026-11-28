@@ -83,6 +83,9 @@ public struct NativeFileTableView: NSViewRepresentable {
         tableView.onLeftMouseDragged = { [weak coord] in
             coord?.cancelPendingRename()
         }
+        tableView.dragURLsProvider = { [weak coord] row in
+            coord?.dragURLs(forRow: row) ?? []
+        }
         tableView.onRightClickSelect = { [weak coord] row in
             coord?.toggleSelection(ofRow: row)
         }
@@ -109,6 +112,21 @@ public struct NativeFileTableView: NSViewRepresentable {
 
     @MainActor
     public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+        /// Local files to drag from `row`: the whole selection when the row is selected,
+        /// otherwise just that row. "..", archive entries and remote items are not draggable.
+        func dragURLs(forRow row: Int) -> [URL] {
+            let items = panel.displayedItems
+            guard items.indices.contains(row) else { return [] }
+            let pressed = items[row]
+            guard !pressed.isParentDirectoryEntry, pressed.archiveContainerPath == nil else { return [] }
+            let selected = items.filter {
+                panel.selectedItemIDs.contains($0.id) && !$0.isParentDirectoryEntry && $0.archiveContainerPath == nil
+            }
+            let list = selected.contains(where: { $0.id == pressed.id }) ? selected : [pressed]
+            return list.map { URL(fileURLWithPath: $0.fullPath) }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+        }
+
         var viewModel: CommanderViewModel
         var panel: PanelController
         weak var tableView: CommanderNSTableView?
@@ -754,10 +772,19 @@ public final class CommanderNSTableView: NSTableView {
 
     var onLeftMouseDown: ((Int, Int) -> Void)?
     var onLeftMouseDragged: (() -> Void)?
+    /// Files to drag when the press started on `row` (the selection if the row is part of it).
+    var dragURLsProvider: ((Int) -> [URL])?
+
+    private var pressRow = -1
+    private var pressPoint = NSPoint.zero
+    private var fileDragStarted = false
 
     public override func mouseDown(with event: NSEvent) {
         let pt = convert(event.locationInWindow, from: nil)
         let r = row(at: pt)
+        pressRow = r
+        pressPoint = pt
+        fileDragStarted = false
         onLeftMouseDown?(r, event.clickCount)
         if r >= 0 {
             onInstantRowPress?(r, event.clickCount, false)
@@ -769,10 +796,40 @@ public final class CommanderNSTableView: NSTableView {
     public override func mouseDragged(with event: NSEvent) {
         onLeftMouseDragged?()
         let pt = convert(event.locationInWindow, from: nil)
+        if fileDragStarted { return }
+        // Pulling a file out (like Explorer / Finder): drag it to a player, the Desktop, any app.
+        if pressRow >= 0, hypot(pt.x - pressPoint.x, pt.y - pressPoint.y) > 5,
+           let urls = dragURLsProvider?(pressRow), !urls.isEmpty {
+            fileDragStarted = true
+            beginFileDrag(urls, event: event)
+            return
+        }
         let r = row(at: pt)
         if r >= 0 {
             onInstantRowPress?(r, 1, false)
         }
+    }
+
+    private func beginFileDrag(_ urls: [URL], event: NSEvent) {
+        let iconSize = NSSize(width: 32, height: 32)
+        let items: [NSDraggingItem] = urls.prefix(200).enumerated().map { index, url in
+            let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            icon.size = iconSize
+            let offset = CGFloat(min(index, 4)) * 4
+            let origin = NSPoint(x: pressPoint.x - iconSize.width / 2 + offset,
+                                 y: pressPoint.y - iconSize.height / 2 + offset)
+            item.setDraggingFrame(NSRect(origin: origin, size: iconSize), contents: icon)
+            return item
+        }
+        let session = beginDraggingSession(with: items, event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
+        session.draggingFormation = .pile
+    }
+
+    /// Other apps get a copy (or an alias with Option+Cmd), never a move of the original.
+    public override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+        context == .outsideApplication ? [.copy, .link] : [.copy]
     }
 
     public override func menu(for event: NSEvent) -> NSMenu? {
