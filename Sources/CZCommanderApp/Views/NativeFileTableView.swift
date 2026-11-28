@@ -83,8 +83,8 @@ public struct NativeFileTableView: NSViewRepresentable {
         tableView.onLeftMouseDragged = { [weak coord] in
             coord?.cancelPendingRename()
         }
-        tableView.dragURLsProvider = { [weak coord] row in
-            coord?.dragURLs(forRow: row) ?? []
+        tableView.dragItemsProvider = { [weak coord] row in
+            coord?.dragPayloads(forRow: row) ?? []
         }
         tableView.onRightClickSelect = { [weak coord] row in
             coord?.toggleSelection(ofRow: row)
@@ -112,19 +112,27 @@ public struct NativeFileTableView: NSViewRepresentable {
 
     @MainActor
     public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
-        /// Local files to drag from `row`: the whole selection when the row is selected,
-        /// otherwise just that row. "..", archive entries and remote items are not draggable.
-        func dragURLs(forRow row: Int) -> [URL] {
+        /// What to drag from `row`: the whole selection when the row is selected, otherwise just
+        /// that row. Local files go as file URLs, Dropbox items as file promises; "..", archive
+        /// entries and Dropbox's virtual rows are not draggable.
+        func dragPayloads(forRow row: Int) -> [FileDragPayload] {
             let items = panel.displayedItems
             guard items.indices.contains(row) else { return [] }
             let pressed = items[row]
-            guard !pressed.isParentDirectoryEntry, pressed.archiveContainerPath == nil else { return [] }
-            let selected = items.filter {
-                panel.selectedItemIDs.contains($0.id) && !$0.isParentDirectoryEntry && $0.archiveContainerPath == nil
+            func draggable(_ i: FileItem) -> Bool {
+                !i.isParentDirectoryEntry && i.archiveContainerPath == nil && !i.fullPath.hasPrefix("dbx-action:")
+                    && i.fullPath != DropboxLocation.sharedWithMe.fullPath
             }
+            guard draggable(pressed) else { return [] }
+            let selected = items.filter { panel.selectedItemIDs.contains($0.id) && draggable($0) }
             let list = selected.contains(where: { $0.id == pressed.id }) ? selected : [pressed]
-            return list.map { URL(fileURLWithPath: $0.fullPath) }
-                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            if panel.dropboxLocation != nil {
+                return list.compactMap { DropboxIntegration.dragPayload(for: $0) }
+            }
+            return list.filter { FileManager.default.fileExists(atPath: $0.fullPath) }.map {
+                FileDragPayload(writer: URL(fileURLWithPath: $0.fullPath) as NSURL,
+                                icon: NSWorkspace.shared.icon(forFile: $0.fullPath))
+            }
         }
 
         var viewModel: CommanderViewModel
@@ -138,7 +146,7 @@ public struct NativeFileTableView: NSViewRepresentable {
         private var lastThemeID: CommanderThemeID = .windowsDefault
         private var lastFontSize: Double = 12.5
         private var lastSizeFormat: FileSizeDisplayFormat = .dynamicKMG
-        private var lastScrollTargetID: String? = nil
+        private var lastScrollSerial = -1
         var cursorSubscription: AnyCancellable?
 
         init(viewModel: CommanderViewModel, panel: PanelController) {
@@ -188,11 +196,12 @@ public struct NativeFileTableView: NSViewRepresentable {
 
         private func syncScrollTarget(_ tv: NSTableView) {
             let newCursor = panel.cursorIndex
-            if let scrollID = panel.scrollTargetID, scrollID != lastScrollTargetID {
-                lastScrollTargetID = scrollID
-                if newCursor >= 0 && newCursor < cachedItems.count {
-                    tv.scrollRowToVisible(newCursor)
-                }
+            // Only once the table shows the new list (the row really is the target), so a request
+            // made right after a reload is not used up on the old rows.
+            if let scrollID = panel.scrollTargetID, panel.scrollRequestSerial != lastScrollSerial,
+               newCursor >= 0, newCursor < cachedItems.count, cachedItems[newCursor].id == scrollID {
+                lastScrollSerial = panel.scrollRequestSerial
+                tv.scrollRowToVisible(newCursor)
             }
         }
 
@@ -763,6 +772,12 @@ struct RightClickSelectCatcher: NSViewRepresentable {
 
 // MARK: - Custom 0.0ms Mouse-Down AppKit TableView & Cell Views
 
+/// One dragged item: what goes on the pasteboard and the icon under the mouse.
+struct FileDragPayload {
+    let writer: NSPasteboardWriting
+    let icon: NSImage
+}
+
 public final class CommanderNSTableView: NSTableView {
     public override var needsUpdateConstraints: Bool { get { false } set { } }
     var onInstantRowPress: ((Int, Int, Bool) -> Void)?
@@ -772,8 +787,9 @@ public final class CommanderNSTableView: NSTableView {
 
     var onLeftMouseDown: ((Int, Int) -> Void)?
     var onLeftMouseDragged: (() -> Void)?
-    /// Files to drag when the press started on `row` (the selection if the row is part of it).
-    var dragURLsProvider: ((Int) -> [URL])?
+    /// What to drag when the press started on `row` (the selection if the row is part of it):
+    /// local files as file URLs, Dropbox items as file promises.
+    var dragItemsProvider: ((Int) -> [FileDragPayload])?
 
     private var pressRow = -1
     private var pressPoint = NSPoint.zero
@@ -799,9 +815,9 @@ public final class CommanderNSTableView: NSTableView {
         if fileDragStarted { return }
         // Pulling a file out (like Explorer / Finder): drag it to a player, the Desktop, any app.
         if pressRow >= 0, hypot(pt.x - pressPoint.x, pt.y - pressPoint.y) > 5,
-           let urls = dragURLsProvider?(pressRow), !urls.isEmpty {
+           let payloads = dragItemsProvider?(pressRow), !payloads.isEmpty {
             fileDragStarted = true
-            beginFileDrag(urls, event: event)
+            beginFileDrag(payloads, event: event)
             return
         }
         let r = row(at: pt)
@@ -810,11 +826,11 @@ public final class CommanderNSTableView: NSTableView {
         }
     }
 
-    private func beginFileDrag(_ urls: [URL], event: NSEvent) {
+    private func beginFileDrag(_ payloads: [FileDragPayload], event: NSEvent) {
         let iconSize = NSSize(width: 32, height: 32)
-        let items: [NSDraggingItem] = urls.prefix(200).enumerated().map { index, url in
-            let item = NSDraggingItem(pasteboardWriter: url as NSURL)
-            let icon = NSWorkspace.shared.icon(forFile: url.path)
+        let items: [NSDraggingItem] = payloads.prefix(200).enumerated().map { index, payload in
+            let item = NSDraggingItem(pasteboardWriter: payload.writer)
+            let icon = payload.icon
             icon.size = iconSize
             let offset = CGFloat(min(index, 4)) * 4
             let origin = NSPoint(x: pressPoint.x - iconSize.width / 2 + offset,

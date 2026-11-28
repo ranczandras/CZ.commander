@@ -6,30 +6,44 @@
 
 Click the icon or the link above (or [`CZ.commander.zip`](CZ.commander.zip) in the file list), unzip, move **CZ.commander.app** to `/Applications`. First launch: **System Settings → Privacy & Security → Open Anyway**.
 
-A native macOS dual-pane file manager for Apple Silicon, inspired by the classic Total Commander workflow: two panels, folder tabs, function-key operations and a toolbox of power tools. Built with SwiftUI + AppKit, no third-party dependencies.
+A native macOS dual-pane file manager for Apple Silicon and Intel Macs, inspired by the classic Total Commander workflow: two panels, folder tabs, function-key operations and a toolbox of power tools. Built with SwiftUI + AppKit, no third-party dependencies.
 
 > CZ.commander is an independent project and is not affiliated with or endorsed by Ghisler Software GmbH, the maker of Total Commander.
 
 ---
 
-## Download
+## Install
 
-Unzip it and move **CZ.commander.app** to `/Applications`. (The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.) The app is not notarized by Apple, so the first launch is blocked; open it once, then choose **System Settings → Privacy & Security → Open Anyway**.
+Paste this into **Terminal** (Applications → Utilities → Terminal) and press Return:
 
-CZ.commander checks GitHub for a newer release at every launch and every 6 hours (can be turned off in Settings) and offers **Install & Restart**: it downloads the update, verifies it is signed by the same certificate, replaces the app and relaunches. **CZ.commander → Check for Updates…** checks right away.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ranczandras/CZ.commander/main/install.sh | bash
+```
 
-Requires macOS 14 or later on Apple Silicon.
+It downloads the latest release, installs **CZ.commander.app** into `/Applications` (or `~/Applications` without admin rights) and starts it. Running it again updates or repairs the installation. The script is [install.sh](install.sh).
+
+Why Terminal: the app is not notarized by Apple, so a copy downloaded with a web browser is blocked by Gatekeeper ("damaged" / "cannot be opened"). The installer downloads with `curl` and clears the quarantine flag. If you downloaded [CZ.commander.zip](https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip) with a browser anyway, unzip it, move the app to `/Applications` and run once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/CZ.commander.app
+```
+
+(The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.)
+
+After that, CZ.commander checks GitHub for a newer release at every launch, every hour, and when you switch back to it after 30 minutes (can be turned off in Settings) and offers **Install & Restart**: it downloads the update, verifies it is signed by the same certificate, replaces the app and relaunches. **CZ.commander → Check for Updates…** checks right away.
+
+Requires macOS 14 Sonoma or later; runs natively on Apple Silicon and Intel Macs.
 
 ## Build & run
 
-Requirements: macOS 14+, Apple Silicon, Xcode command line tools (Swift 6 toolchain).
+Requirements: macOS 14+, Xcode command line tools (Swift 6 toolchain).
 
 ```bash
 ./build_app.sh
 open /Applications/CZ.commander.app
 ```
 
-`build_app.sh` mirrors the sources to a local build cache (`~/.cache/czcommander-build`, override with `CZ_BUILD_DIR`), builds a release `arm64` binary, renders the app icon, assembles and signs the bundle on the local disk, then installs it to `/Applications` and copies it into the project folder.
+`build_app.sh` mirrors the sources to a local build cache (`~/.cache/czcommander-build`, override with `CZ_BUILD_DIR`), builds a universal release binary (`arm64` + `x86_64`), renders the app icon, assembles and signs the bundle on the local disk, then installs it to `/Applications` and copies it into the project folder.
 
 Run the tests:
 
@@ -113,13 +127,14 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
 - **Archives**: create and extract `.zip` / `.tar` variants, browse archives inside the panel.
 - **Split & Combine** with `.crc` files, **checksums** (CRC32 `.sfv`, MD5, SHA-1, SHA-256, SHA-512), **encode / decode** (Base64, UUEncode, XXEncode).
 - **Attributes**: POSIX permissions, macOS locked / hidden flags, Finder tags, timestamps.
-- **Copy / move / unpack progress** (Total Commander style): current file from / to, a bar for the file and one for the whole job, percent, speed, elapsed and remaining time, Pause / Resume, Cancel and Background (a toolbar indicator brings the dialog back). Jobs run on a background thread one after the other; copies clone on APFS when possible, folders merge into existing ones, same-volume moves are renames.
+- **Dropbox** ("Dropbox" button in the drive bar, menu *Dropbox Account…*): sign in with your browser (OAuth 2 + PKCE; the app never sees your password, the refresh token is kept in a private 0600 file in Application Support), browse your Dropbox and **⇄ Shared with me**: the shared folder links you add with **＋ Add shared link…** inside it (also invitations you could not add to your Dropbox), kept until you remove them with F8. F5 / F6 download to or upload from a local panel with the progress dialog: folders are walked one by one, existing files trigger the same question (Skip All fetches only what is missing) and interrupted files resume from `.czpart`, uploads go in 8 MB chunks. Copy / move inside Dropbox happens on the server; F7 new folder, F8 delete (restorable on dropbox.com), Shift+F6 rename, Enter opens a file. Dragging works too: Dropbox items dragged to the Desktop / Finder are downloaded there (file promises), dragged onto the other panel they download, local files dragged onto a Dropbox panel upload.
+- **Copy / move / unpack progress** (Total Commander style): current file from / to, a bar for the file and one for the whole job, percent, speed, elapsed and remaining time, Pause / Resume, Cancel and Background (a toolbar indicator brings the dialog back). When a target exists it asks like Total Commander (Overwrite, Overwrite All, Overwrite All Older, Skip, Skip All, Rename, Rename All, Cancel, with both sizes and dates) and reports how many files were copied and skipped. Jobs run on a background thread one after the other; copies clone on APFS when possible, folders merge into existing ones, same-volume moves are renames, and a move to another drive removes the originals only after the whole job was copied (cancel or an error leaves them all in place).
 - **Quick search**: just start typing in a panel (Total Commander "Letters - with search dialog"): the list keeps only the names that contain the typed text anywhere, the cursor jumps to the first match; Backspace edits, Esc closes, arrows / Enter work on the filtered list, `*` and `?` work as wildcards.
 - **F3 on images, video and audio** opens macOS Quick Look (several selected files page with the arrow keys; Esc, Space or F3 closes). Other files open in the built-in Lister.
 - **Drag files out** of a panel into any app, a media player or the Desktop: the selected files (or the one under the mouse) are dragged as a copy, never moved.
 - **Cleanup** (toolbar button, `Cmd+Opt+K`): scans the Trash, application and browser caches, logs, old temporary files, Xcode and developer-tool caches and large leftovers (device backups, installers in Downloads), groups them by category and deletes only what you tick. Regenerable data is ticked by default; anything that costs a long re-download or is not regenerated is marked "review first". What is scanned and what is never touched is documented in [docs/CLEANUP.md](docs/CLEANUP.md).
 - **Empty Trash** (toolbar button, `Cmd+Shift+Backspace`): shows how much is in the Trash (home and other drives) and deletes it after confirmation.
-- **App Uninstaller** (toolbar button, `Cmd+Opt+U`, or drop an `.app` on it; opens with the `.app` under the cursor): lists the apps in `/Applications` and `~/Applications` with their sizes and finds everything an app left behind: Application Support, caches, preferences (ByHost too), containers and group containers, saved state, web data, logs, crash reports, launch agents / daemons, privileged helpers and per-user temporary folders, matched by the bundle ids of the app and of the helpers inside it, its name and `<Vendor>/<Product>` folders. Only exact matches are ticked; prefix matches and components shared with the vendor's other apps are listed with a "check" note. The app is quit first, its launch agents are unloaded, and everything goes to the Trash (undoable). Apple's own apps are protected; when a vendor ships its own uninstaller (Adobe) it is offered first.
+- **App Uninstaller** (toolbar button, `Cmd+Opt+U`, or drop an `.app` on it; opens with the `.app` under the cursor): lists the apps in `/Applications` and `~/Applications` with their sizes and finds everything an app left behind: Application Support, caches, preferences (ByHost too), containers and group containers, saved state, web data, logs, crash reports, launch agents / daemons, privileged helpers and per-user temporary folders, matched by the bundle ids of the app and of the helpers inside it, its name and `<Vendor>/<Product>` folders. Only exact matches are ticked; prefix matches and components shared with the vendor's other apps are listed with a "check" note. The app is quit first, its launch agents are unloaded, and everything goes to the Trash (undoable). Apps protected by macOS (Safari, the /System apps) are refused, Apple apps from the App Store can be removed; if macOS blocks the removal the window explains how to turn on *App Management* for CZ.commander. When a vendor ships its own uninstaller (Adobe) it is offered first.
 - **Startup Items** (toolbar button, `Cmd+Opt+L`): shows everything macOS starts at login or boot (Login Items, launch agents of your account and of all users, launch daemons) with app icon, how it starts, whether it is running, and flags for leftovers of uninstalled apps ("program missing") and for security / VPN software. Untick an item to turn it off, tick it to turn it on again; nothing is deleted (agents are switched with `launchctl disable`, login items are removed from the list and remembered so they can be added back). Apple items and root daemons are locked. What is covered, what is safe to turn off and what is not covered (apps registered through "Allow in the Background") is in [docs/STARTUP.md](docs/STARTUP.md).
 - **YouTube Downloader** (toolbar button, `Cmd+Opt+Y`): paste one or more video, playlist or channel links and download them as **MP4** (best resolution, video + audio merged) or **MP3** (best audio, VBR, cover art). Optional **YouTube login** taken from Safari, Chrome, Firefox, Brave, Edge, Vivaldi, Opera or Chromium (no password asked): passes the "confirm you're not a bot" check, opens private / age-restricted videos and Watch Later / Liked lists, and gets YouTube Premium quality (1080p Premium, 256 kbps audio) when the account has it. Files go to `~/Downloads/YoutubeZ`, playlists into their own numbered folder; downloads keep running when the window is closed. It is a separate window (move, resize, minimize or hide it while you keep working in the panels). A watch link that carries a playlist (`watch?v=…&list=…`) downloads the whole playlist; YouTube Mix radio lists (`list=RD…`) download only the video. Uses [yt-dlp](https://github.com/yt-dlp/yt-dlp), ffmpeg and a JavaScript runtime: existing Homebrew installs are used, otherwise the official builds are downloaded once into `~/Library/Application Support/CZ.commander/tools` and verified with SHA-256.
 - Properties & hash inspector, file list export (TXT, CSV, MD, HTML), disk space analyzer, FTP / SFTP connection manager.

@@ -9,7 +9,7 @@ public struct CopyMoveSheetView: View {
     @State private var destinationDir: String
     public let isMove: Bool
     @State private var targetMask: String = "*.*"
-    @State private var overwritePolicy: OverwritePolicy = .overwriteAll
+    @State private var overwritePolicy: OverwritePolicy = .ask
     @State private var preserveTimestamps: Bool = true
     @State private var preservePermissions: Bool = true
     @State private var verifyAfterCopy: Bool = false
@@ -111,6 +111,7 @@ public struct CopyMoveSheetView: View {
             // Check if source is inside an archive (extract out of archive!)
             if case .archive(let archivePath, _) = viewModel.activePanel.activeTab.vfsMode {
                 let internalPaths = sources.compactMap { $0.archiveInternalPath }
+                dismiss()
                 FileOperationManager.shared.extract(from: archivePath, entries: internalPaths, to: destinationDir)
                 return
             } else if case .archive(let targetArchivePath, _) = viewModel.inactivePanel.activeTab.vfsMode {
@@ -128,6 +129,7 @@ public struct CopyMoveSheetView: View {
                     verifyAfterCopy: verifyAfterCopy
                 )
                 // Runs in the background with the Total Commander style progress dialog.
+                dismiss()
                 if isMove {
                     FileOperationManager.shared.move(sources.map { $0.fullPath }, to: destinationDir, options: opts)
                 } else {
@@ -192,6 +194,22 @@ public struct MkDirSheetView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Create (OK)") {
+                    if let loc = DropboxLocation(fullPath: baseDir) {
+                        let name = folderExpression.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !name.isEmpty, !name.contains("/") else { errorMessage = "Enter a folder name."; return }
+                        let panel = viewModel.activePanel
+                        Task {
+                            do {
+                                try await DropboxClient.shared.createFolder(loc.appending(name))
+                                panel.refreshDropbox()
+                                panel.reload(selectingItemNamed: name)
+                                dismiss()
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                        return
+                    }
                     do {
                         let created = try FileSystemEngine.createDirectories(expression: folderExpression, in: baseDir)
                         let firstName = created.first.map { ($0 as NSString).lastPathComponent }
@@ -357,6 +375,7 @@ public struct UnpackFilesSheetView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Unpack (OK)") {
+                    dismiss()
                     FileOperationManager.shared.unpack(archives.map(\.fullPath), to: destinationDir,
                                                        alwaysFolder: unpackEachToSubdir)
                 }

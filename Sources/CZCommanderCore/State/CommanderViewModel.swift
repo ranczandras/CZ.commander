@@ -71,6 +71,8 @@ public enum PanelVFSMode: Equatable, Sendable {
     case archive(archivePath: String, internalDirectory: String)
     case searchResults(title: String, items: [FileItem], originPath: String)
     case remote(profile: RemoteConnectionProfile, remotePath: String)
+    /// Dropbox place; `origin` is the local folder to return to.
+    case dropbox(location: DropboxLocation, origin: String)
 }
 
 public struct FolderTab: Identifiable, Sendable {
@@ -155,6 +157,8 @@ public struct FolderTab: Identifiable, Sendable {
             return prefix + "🔍 \(title)"
         case .remote(let profile, let remPath):
             return prefix + "🌐 \(profile.title):\(remPath)"
+        case .dropbox(let loc, _):
+            return prefix + "☁︎ " + (loc == .own("/") ? "Dropbox" : loc.lastName)
         }
     }
 }
@@ -263,7 +267,8 @@ public final class PanelController: ObservableObject {
     @Published public var tabs: [FolderTab]
     @Published public var activeTabIndex: Int = 0
     @Published public var rawItems: [FileItem] = []
-    @Published public var displayedItems: [FileItem] = []
+    /// The status bar listens to the cursor signal, so a new list (filter, async Dropbox load) pings it too.
+    @Published public var displayedItems: [FileItem] = [] { didSet { cursorSignal.notify() } }
     // Cursor and selection are deliberately NOT @Published: moving the cursor must not re-render
     // the whole panel UI. Changes go through `cursorSignal`; the list view updates its rows
     // directly and only small views (status bar, Thumbs grid, Quick View) observe the signal.
@@ -271,6 +276,9 @@ public final class PanelController: ObservableObject {
     public var cursorIndex: Int = 0 { didSet { if oldValue != cursorIndex { cursorSignal.notify() } } }
     public var cursorItemID: String? = nil { didSet { if oldValue != cursorItemID { cursorSignal.notify() } } }
     public var scrollTargetID: String? = nil { didSet { if oldValue != scrollTargetID { cursorSignal.notify() } } }
+    /// Bumped on every scroll request, so scrolling to the same row again (in and out of the
+    /// same folder) still scrolls.
+    public private(set) var scrollRequestSerial = 0
     public var selectedItemIDs: Set<String> = [] { didSet { if oldValue != selectedItemIDs { cursorSignal.notify() } } }
     /// Per-tab selection kept outside the @Published `tabs` array, so selecting does not
     /// re-render the panel. Keyed by tab id; moves with the tabs on swap.
@@ -331,8 +339,9 @@ public final class PanelController: ObservableObject {
         if cursorItemID != newID {
             cursorItemID = newID
         }
-        if scrollIntoView && scrollTargetID != newID {
-            scrollTargetID = newID
+        if scrollIntoView {
+            scrollRequestSerial += 1
+            if scrollTargetID != newID { scrollTargetID = newID } else { cursorSignal.notify() }
         }
     }
 
@@ -406,6 +415,11 @@ public final class PanelController: ObservableObject {
                 rawItems = withParent
             case .remote(let profile, let remPath):
                 rawItems = try RemoteConnectionEngine.listDirectory(profile: profile, remotePath: remPath)
+            case .dropbox(let loc, let origin):
+                currentVolumeInfo = nil
+                let (items, err) = dropboxRawItems(loc, origin: origin)
+                rawItems = items
+                if let err { errorMessage = err }
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -432,6 +446,31 @@ public final class PanelController: ObservableObject {
         )
     }
 
+    /// Names containing `text` anywhere; `*` / `?` make it a wildcard mask.
+    nonisolated public static func quickFilter(_ items: [FileItem], with text: String) -> [FileItem] {
+        if text.contains("*") || text.contains("?") {
+            let matcher = WildcardMaskMatcher(expression: text)
+            return items.filter { matcher.matches($0.name) }
+        }
+        return items.filter {
+            $0.name.localizedCaseInsensitiveContains(text)
+                || ($0.relativeDisplayPath?.localizedCaseInsensitiveContains(text) ?? false)
+        }
+    }
+
+    /// Total Commander only accepts a typed character when something still matches. A wildcard
+    /// mask being typed ("*.sw") counts as matching while it can still grow into a match.
+    public func quickSearchWouldMatch(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        let candidates = rawItems.filter { !$0.isParentDirectoryEntry && !$0.fullPath.hasPrefix("dbx-action:") }
+        if !Self.quickFilter(candidates, with: trimmed).isEmpty { return true }
+        if (trimmed.contains("*") || trimmed.contains("?")) && !trimmed.hasSuffix("*") {
+            return !Self.quickFilter(candidates, with: trimmed + "*").isEmpty
+        }
+        return false
+    }
+
     public func applySortAndFilter(
         preferredSelectName: String? = nil,
         fallbackCursorID: String? = nil,
@@ -442,15 +481,7 @@ public final class PanelController: ObservableObject {
 
         let filterText = activeTab.quickFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         if !filterText.isEmpty {
-            if filterText.contains("*") || filterText.contains("?") {
-                let matcher = WildcardMaskMatcher(expression: filterText)
-                regularEntries = regularEntries.filter { matcher.matches($0.name) }
-            } else {
-                regularEntries = regularEntries.filter {
-                    $0.name.localizedCaseInsensitiveContains(filterText)
-                        || ($0.relativeDisplayPath?.localizedCaseInsensitiveContains(filterText) ?? false)
-                }
-            }
+            regularEntries = Self.quickFilter(regularEntries, with: filterText)
         }
 
         let col = activeTab.sortColumn
@@ -495,16 +526,18 @@ public final class PanelController: ObservableObject {
 
         displayedItems = parentEntries + regularEntries
 
+        // The restored cursor is scrolled into view: coming back from a subfolder lands on it
+        // even far down a long list.
         if let nameToSelect = preferredSelectName,
            let idx = displayedItems.firstIndex(where: { $0.name == nameToSelect }) {
-            setCursor(to: idx)
+            setCursor(to: idx, scrollIntoView: true)
         } else if let prevID = fallbackCursorID ?? cursorItemID,
                   let idx = displayedItems.firstIndex(where: { $0.id == prevID }) {
-            setCursor(to: idx)
+            setCursor(to: idx, scrollIntoView: true)
         } else if let prevIdx = fallbackCursorIndex, prevIdx > 0 {
-            setCursor(to: prevIdx)
+            setCursor(to: prevIdx, scrollIntoView: true)
         } else {
-            setCursor(to: 0)
+            setCursor(to: 0, scrollIntoView: true)
         }
     }
 
@@ -525,6 +558,10 @@ public final class PanelController: ObservableObject {
         recordHistory: Bool = true,
         selectingChildNamed childName: String? = nil
     ) {
+        if DropboxLocation.isDropboxPath(path), let loc = DropboxLocation(fullPath: path) {
+            openDropbox(loc, selecting: childName)
+            return
+        }
         let stdPath = (path as NSString).standardizingPath
         guard FileManager.default.fileExists(atPath: stdPath) else { return }
 
@@ -607,6 +644,11 @@ public final class PanelController: ObservableObject {
                 cursorIndex = 0
                 reload()
             }
+
+        case .dropbox:
+            if !enterDropboxItem(item) {
+                DropboxPanelCache.shared.onOpenFile?(item, self)
+            }
         }
     }
 
@@ -649,6 +691,9 @@ public final class PanelController: ObservableObject {
             let parent = (remPath as NSString).deletingLastPathComponent
             activeTab.vfsMode = .remote(profile: profile, remotePath: parent.isEmpty ? "/" : parent)
             reload()
+
+        case .dropbox(let loc, let origin):
+            dropboxGoUp(loc, origin: origin)
         }
     }
 
@@ -1093,6 +1138,8 @@ public enum ActiveCommanderSheet: Identifiable {
     case cleanup
     case emptyTrash
     case youtubeDownloader
+    case dropboxAccount
+    case dropboxLink(side: PanelSide)
     case fileOperationProgress
     case appUninstaller
     case startup
@@ -1132,6 +1179,8 @@ public enum ActiveCommanderSheet: Identifiable {
         case .cleanup: return "cleanup"
         case .emptyTrash: return "emptytrash"
         case .youtubeDownloader: return "youtubedownloader"
+        case .dropboxAccount: return "dropboxaccount"
+        case .dropboxLink: return "dropboxlink"
         case .fileOperationProgress: return "fileop"
         case .appUninstaller: return "appuninstaller"
         case .startup: return "startup"
@@ -1272,6 +1321,9 @@ public final class CommanderViewModel: ObservableObject {
     }
 
     public func refreshVolumes() {
+        for panel in [leftPanel, rightPanel] {
+            if let loc = panel.dropboxLocation { DropboxPanelCache.shared.invalidate(loc) }
+        }
         mountedVolumes = VolumeScanner.mountedVolumes()
         quickShortcuts = VolumeScanner.quickShortcuts()
         leftPanel.reload()
@@ -1408,7 +1460,32 @@ public final class CommanderViewModel: ObservableObject {
         }
     }
 
+    /// Set by the app: copy / move when either panel is in Dropbox (download, upload or a
+    /// server-side copy) with the progress dialog.
+    public var dropboxTransferHandler: ((_ items: [FileItem], _ from: PanelController, _ to: PanelController, _ isMove: Bool) -> Void)?
+
+    /// Real files / folders of the panel (Dropbox virtual rows like "Loading…" left out).
+    private var transferableItems: [FileItem] {
+        activePanel.actionableItems.filter { !$0.fullPath.hasPrefix("dbx-action:") && $0.fullPath != DropboxLocation.sharedWithMe.fullPath }
+    }
+
+    private func routeDropboxTransfer(isMove: Bool) -> Bool {
+        guard activePanel.dropboxLocation != nil || inactivePanel.dropboxLocation != nil else { return false }
+        let items = transferableItems
+        guard !items.isEmpty else {
+            statusBannerMessage = "Nothing to copy here."
+            return true
+        }
+        if activePanel.dropboxLocation == nil && items.contains(where: { $0.archiveContainerPath != nil }) {
+            statusBannerMessage = "Unpack archive entries first, then upload them."
+            return true
+        }
+        dropboxTransferHandler?(items, activePanel, inactivePanel, isMove)
+        return true
+    }
+
     public func triggerF5Copy(inSameDirectory: Bool = false) {
+        if !inSameDirectory, routeDropboxTransfer(isMove: false) { return }
         let items = activePanel.actionableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No items to copy in this folder!"
@@ -1425,6 +1502,7 @@ public final class CommanderViewModel: ObservableObject {
             activePanel.inlineRenameText = target.name
             return
         }
+        if routeDropboxTransfer(isMove: true) { return }
         let items = activePanel.actionableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No items to move in this folder!"
@@ -1443,6 +1521,20 @@ public final class CommanderViewModel: ObservableObject {
         activePanel.inlineRenameItemID = nil
         guard !newName.isEmpty && newName != item.name else { return }
 
+        if let from = DropboxLocation(fullPath: item.fullPath), let folder = activePanel.dropboxLocation {
+            let panel = activePanel
+            Task { @MainActor in
+                do {
+                    try await DropboxClient.shared.move(from, to: folder.appending(newName))
+                    panel.refreshDropbox()
+                    panel.reload(selectingItemNamed: newName)
+                } catch {
+                    self.statusBannerMessage = error.localizedDescription
+                }
+            }
+            return
+        }
+
         let dir = (item.fullPath as NSString).deletingLastPathComponent
         let newFullPath = (dir as NSString).appendingPathComponent(newName)
         do {
@@ -1460,7 +1552,7 @@ public final class CommanderViewModel: ObservableObject {
 
     /// F8 / Delete: asks for confirmation first (Total Commander style), see `performDelete`.
     public func triggerF8Delete(permanent: Bool = false, secureWipe: Bool = false) {
-        let items = activePanel.actionableItems
+        let items = activePanel.dropboxLocation == nil ? activePanel.actionableItems : transferableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No item selected to delete!"
             return
@@ -1471,6 +1563,38 @@ public final class CommanderViewModel: ObservableObject {
     /// Deletes the confirmed items (trash, permanent, or secure wipe; archive entries in archive mode).
     public func performDelete(items: [FileItem], permanent: Bool = false, secureWipe: Bool = false) {
         guard !items.isEmpty else { return }
+
+        if activePanel.dropboxLocation != nil {
+            let panel = activePanel
+            var targets = items.compactMap { DropboxLocation(fullPath: $0.fullPath) }
+            // Saved shared links: F8 only takes them off the list, never touches Dropbox.
+            let links = targets.compactMap { t -> String? in
+                if case .link(let url, let p) = t, p.isEmpty { return url }
+                return nil
+            }
+            if !links.isEmpty {
+                links.forEach { DropboxSavedLinks.remove(url: $0) }
+                targets.removeAll { if case .link(_, let p) = $0 { return p.isEmpty }; return false }
+                DropboxPanelCache.shared.invalidate(.sharedWithMe)
+                if targets.isEmpty {
+                    panel.clearSelection()
+                    panel.refreshDropbox()
+                    statusBannerMessage = "Removed \(links.count) link(s) from the list (nothing deleted in Dropbox)"
+                    return
+                }
+            }
+            statusBannerMessage = "Deleting \(targets.count) item(s) in Dropbox…"
+            Task { @MainActor in
+                var failed: String?
+                for t in targets {
+                    do { try await DropboxClient.shared.delete(t) } catch { failed = error.localizedDescription }
+                }
+                panel.clearSelection()
+                panel.refreshDropbox()
+                self.statusBannerMessage = failed ?? "Deleted \(targets.count) item(s) in Dropbox (restorable on dropbox.com for 30 days)"
+            }
+            return
+        }
 
         if case .archive(let archivePath, _) = activePanel.activeTab.vfsMode {
             let internalPaths = items.compactMap { $0.archiveInternalPath }

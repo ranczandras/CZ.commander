@@ -208,6 +208,11 @@ public struct CZCommanderMainApp: App {
             }
             .keyboardShortcut("y", modifiers: [.command, .option])
 
+            Button("Dropbox Account...") {
+                MainWindowController.show()
+                viewModel.activeSheet = .dropboxAccount
+            }
+
             Button("Uninstall App...") {
                 AppUninstallerWindowController.show(viewModel: viewModel)
             }
@@ -562,8 +567,20 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 for n in 1...3 {
                     FileManager.default.createFile(atPath: src + "/Footage/clip\(n).mov", contents: Data(count: 300_000 * n))
                 }
+                // An existing target, so the "File exists" question shows.
+                let dst = (dir as NSString).appendingPathComponent("fileop-dst")
+                try? FileManager.default.createDirectory(atPath: dst + "/Footage", withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: dst + "/Footage/clip1.mov", contents: Data(count: 1000))
                 let m = FileOperationManager.shared
-                m.copy([src + "/Footage"], to: (dir as NSString).appendingPathComponent("fileop-dst"))
+                m.copy([src + "/Footage"], to: dst)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
+            case "fileopbg":
+                // A paused copy running in the background, to show the toolbar indicator.
+                let src = (dir as NSString).appendingPathComponent("fileopbg-src")
+                try? FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: src + "/clip.mov", contents: Data(count: 2_000_000))
+                let m = FileOperationManager.shared
+                m.copy([src + "/clip.mov"], to: (dir as NSString).appendingPathComponent("fileopbg-dst"), background: true)
                 m.togglePause()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
             case "uninstaller":
@@ -609,10 +626,12 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(n) * 0.15) {
                         let isBack = ch == "<"
                         let isF3 = ch == "|"
-                        let text = isBack ? "\u{7F}" : (isF3 ? "\u{F706}" : String(ch))
+                        let isReturn = ch == "^"
+                        let isF5 = ch == "%"
+                        let text = isBack ? "\u{7F}" : (isF3 ? "\u{F706}" : (isReturn ? "\r" : (isF5 ? "\u{F708}" : String(ch))))
                         if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                      windowNumber: window.windowNumber, context: nil, characters: text,
-                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: isBack ? 51 : (isF3 ? 99 : 0)) {
+                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: isBack ? 51 : (isF3 ? 99 : (isReturn ? 36 : (isF5 ? 96 : 0)))) {
                             NSApp.postEvent(ev, atStart: false)
                         }
                     }
@@ -642,6 +661,7 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidBecomeActive(_ notification: Notification) {
         MacFunctionKeyModeController.shared.enableStandardFunctionKeysForApp()
         CommanderKeyboardRouter.shared.focusKeyCaptureView()
+        UpdateChecker.shared.checkIfStale()
     }
 
     public func applicationWillResignActive(_ notification: Notification) {
@@ -810,7 +830,13 @@ public final class CommanderKeyboardRouter {
                     if !navAndFnKeyCodes.contains(event.keyCode), event.specialKey == nil,
                        let chars = event.characters, !chars.isEmpty,
                        chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
-                        setQuickSearch(panel.activeTab.quickFilter + chars, on: panel)
+                        let next = panel.activeTab.quickFilter + chars
+                        // Like Total Commander: a character that leaves nothing to show is refused.
+                        if panel.quickSearchWouldMatch(next) {
+                            setQuickSearch(next, on: panel)
+                        } else {
+                            NSSound.beep()
+                        }
                         lastHandledTimestamp = event.timestamp
                         return true
                     }
@@ -1199,7 +1225,11 @@ public final class CommanderKeyboardRouter {
         // anywhere (not only at the start).
         if !isCommand && !isControl && !isOption, let chars = event.characters, chars.count == 1,
            let ch = chars.first, Self.startsQuickSearch(ch) {
-            setQuickSearch(chars, on: panel)
+            if panel.quickSearchWouldMatch(chars) {
+                setQuickSearch(chars, on: panel)
+            } else {
+                NSSound.beep()
+            }
             lastHandledTimestamp = event.timestamp
             return true
         }

@@ -16,7 +16,8 @@ enum AuxWindow {
     }
 
     /// Shows the window `id`, creating it with `content` the first time.
-    static func show<Content: View>(id: String, title: String, size: NSSize, minSize: NSSize, content: () -> Content) {
+    static func show<Content: View>(id: String, title: String, size: NSSize, minSize: NSSize, floating: Bool = false,
+                                    content: () -> Content) {
         if let window = windows[id] {
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.makeKeyAndOrderFront(nil)
@@ -51,6 +52,11 @@ enum AuxWindow {
         window.minSize = minSize
         window.animationBehavior = .none
         window.collectionBehavior = [.managed, .participatesInCycle]
+        if floating {
+            // Stays above the main window (Total Commander's copy dialog does too).
+            window.level = .floating
+            window.hidesOnDeactivate = false
+        }
         let autosave = "CZAux-" + id
         if !window.setFrameUsingName(autosave) {
             window.center()
@@ -61,6 +67,7 @@ enum AuxWindow {
     }
 
     static func hide(_ id: String) { windows[id]?.orderOut(nil) }
+    static func isVisible(_ id: String) -> Bool { windows[id]?.isVisible ?? false }
     static func minimize(_ id: String) { windows[id]?.miniaturize(nil) }
 
     private static var framesBeforeZoom: [String: NSRect] = [:]

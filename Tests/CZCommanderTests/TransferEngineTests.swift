@@ -140,3 +140,104 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertNil(p.remainingSeconds)
     }
 }
+
+final class TransferConflictTests: XCTestCase {
+    private var root: String!
+    private let fm = FileManager.default
+
+    override func setUpWithError() throws {
+        root = fm.temporaryDirectory.appendingPathComponent("czc-conf-\(UUID().uuidString)").path
+        for d in ["src", "dst"] { try fm.createDirectory(atPath: root + "/" + d, withIntermediateDirectories: true) }
+        for n in ["a", "b", "c"] {
+            fm.createFile(atPath: root + "/src/\(n).txt", contents: Data("new-\(n)".utf8))
+            fm.createFile(atPath: root + "/dst/\(n).txt", contents: Data("old-\(n)".utf8))
+        }
+        fm.createFile(atPath: root + "/src/d.txt", contents: Data("only-new".utf8))
+    }
+
+    override func tearDownWithError() throws { try? fm.removeItem(atPath: root) }
+
+    private func text(_ rel: String) -> String? { try? String(contentsOfFile: root + "/" + rel, encoding: .utf8) }
+
+    private func run(_ answers: [TransferConflictDecision]) throws -> (asked: Int, progress: FileOperationProgress) {
+        let control = TransferControl()
+        let lock = NSLock()
+        var queue = answers
+        var asked = 0
+        control.conflictResolver = { _ in
+            lock.withLock { asked += 1; return queue.isEmpty ? .skip : queue.removeFirst() }
+        }
+        var last = FileOperationProgress()
+        let srcs = ["a", "b", "c", "d"].map { root + "/src/\($0).txt" }
+        try TransferEngine.copyOrMove(sources: srcs, to: root + "/dst", isMove: false,
+                                      options: FileOperationOptions(overwritePolicy: .ask), control: control) { last = $0 }
+        return (asked, last)
+    }
+
+    func testSkipAllAsksOnceAndCopiesOnlyMissing() throws {
+        let r = try run([.skipAll])
+        XCTAssertEqual(r.asked, 1)
+        XCTAssertEqual(text("dst/a.txt"), "old-a")
+        XCTAssertEqual(text("dst/c.txt"), "old-c")
+        XCTAssertEqual(text("dst/d.txt"), "only-new")
+        XCTAssertEqual(r.progress.skippedFiles, 3)
+    }
+
+    func testOverwriteThenSkipThenRename() throws {
+        let r = try run([.overwrite, .skip, .rename])
+        XCTAssertEqual(r.asked, 3)
+        XCTAssertEqual(text("dst/a.txt"), "new-a")
+        XCTAssertEqual(text("dst/b.txt"), "old-b")
+        XCTAssertEqual(text("dst/c.txt"), "old-c")
+        let names = try fm.contentsOfDirectory(atPath: root + "/dst")
+        XCTAssertEqual(names.filter { $0.hasPrefix("c") }.count, 2, "renamed copy next to the original")
+        XCTAssertEqual(r.progress.skippedFiles, 1)
+    }
+
+    func testCancelStops() {
+        XCTAssertThrowsError(try run([.cancel])) { XCTAssertTrue($0 is TransferCancelledError) }
+        XCTAssertEqual(text("dst/a.txt"), "old-a")
+        XCTAssertNil(text("dst/d.txt"))
+    }
+}
+
+final class MoveAtEndTests: XCTestCase {
+    func testCrossVolumeStyleMoveDeletesOnlyAfterEverythingCopied() throws {
+        // Same volume would be a rename; copyTree with isMove exercises the copy+delete path.
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-mv-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        try fm.createDirectory(atPath: root + "/src/A/sub", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: root + "/dst", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/src/A/one.txt", contents: Data("1".utf8))
+        fm.createFile(atPath: root + "/src/A/sub/two.txt", contents: Data("2".utf8))
+
+        let reporter = TransferReporter(handler: nil)
+        let ledger = TransferEngine.MoveLedger()
+        _ = try TransferEngine.copyTree(src: root + "/src/A", dst: root + "/dst/A", isMove: true,
+                                        options: FileOperationOptions(), control: nil, reporter: reporter, ledger: ledger)
+        // Nothing removed yet: the sources wait for the end of the whole job.
+        XCTAssertTrue(fm.fileExists(atPath: root + "/src/A/sub/two.txt"))
+        XCTAssertTrue(fm.fileExists(atPath: root + "/dst/A/sub/two.txt"))
+        XCTAssertEqual(ledger.files.count, 2)
+        XCTAssertEqual(ledger.directories.last, root + "/src/A", "folders in post-order, the top one last")
+    }
+
+    func testCancelledMoveKeepsSources() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-mv2-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        try fm.createDirectory(atPath: root + "/src", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/src/a.txt", contents: Data("a".utf8))
+        fm.createFile(atPath: root + "/src/b.txt", contents: Data("b".utf8))
+        let control = TransferControl()
+        var answered = 0
+        control.conflictResolver = { _ in answered += 1; return .cancel }
+        try fm.createDirectory(atPath: root + "/dst", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/dst/b.txt", contents: Data("old".utf8))
+        XCTAssertThrowsError(try TransferEngine.copyOrMove(sources: [root + "/src/a.txt", root + "/src/b.txt"],
+                                                           to: root + "/dst", isMove: true,
+                                                           options: FileOperationOptions(overwritePolicy: .ask), control: control))
+        XCTAssertTrue(fm.fileExists(atPath: root + "/src/b.txt"))
+    }
+}

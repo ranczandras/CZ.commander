@@ -148,3 +148,22 @@ final class QuickLookMediaTests: XCTestCase {
         XCTAssertFalse(PanelController.isQuickLookMedia(item("noext")))
     }
 }
+
+@MainActor
+final class QuickSearchMatchTests: XCTestCase {
+    func testRefusesCharactersWithoutMatch() {
+        let panel = PanelController(side: .left, initialPath: NSTemporaryDirectory())
+        panel.rawItems = [
+            FileItem.parentEntry(for: "/"),
+            FileItem(name: "Adobe Premiere", fullPath: "/x/Adobe Premiere", isDirectory: true),
+            FileItem(name: "notes.swift", fullPath: "/x/notes.swift", isDirectory: false),
+        ]
+        XCTAssertTrue(panel.quickSearchWouldMatch("dob"))
+        XCTAssertTrue(panel.quickSearchWouldMatch("PREM"))
+        XCTAssertFalse(panel.quickSearchWouldMatch("dobx"))
+        XCTAssertTrue(panel.quickSearchWouldMatch("*.sw"), "a mask still being typed")
+        XCTAssertTrue(panel.quickSearchWouldMatch("*.swift"))
+        XCTAssertFalse(panel.quickSearchWouldMatch("*.txt"))
+        XCTAssertFalse(panel.quickSearchWouldMatch(".."), "the parent row never counts")
+    }
+}

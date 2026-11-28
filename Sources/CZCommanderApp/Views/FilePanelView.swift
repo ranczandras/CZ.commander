@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import Combine
 import AppKit
 import CZCommanderCore
@@ -47,24 +48,35 @@ public struct FilePanelView: View {
         .background(palette.panelBackground.swiftUIColor)
         // The active panel is shown by its stronger header colour only (no frame), like Total Commander.
         .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.5))
-        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-            // Collect every dropped file, then copy them as one job with the progress dialog.
+        .onDrop(of: [.fileURL, UTType(importedAs: "com.czcommander.dropbox-item")], isTargeted: nil) { providers in
+            // Collect everything dropped (local files and Dropbox items from the other panel),
+            // then copy it as one job with the progress dialog.
             let group = DispatchGroup()
             let lock = NSLock()
             var paths: [String] = []
+            var dropboxPaths: [String] = []
             for provider in providers {
+                if provider.hasItemConformingToTypeIdentifier("com.czcommander.dropbox-item") {
+                    group.enter()
+                    provider.loadDataRepresentation(forTypeIdentifier: "com.czcommander.dropbox-item") { data, _ in
+                        if let data, let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? String {
+                            lock.lock(); dropboxPaths.append(plist); lock.unlock()
+                        } else if let data, let text = String(data: data, encoding: .utf8), text.hasPrefix("dbx:") {
+                            lock.lock(); dropboxPaths.append(text); lock.unlock()
+                        }
+                        group.leave()
+                    }
+                    continue
+                }
                 group.enter()
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
                     if let url { lock.lock(); paths.append(url.path); lock.unlock() }
                     group.leave()
                 }
             }
-            let destination = self.panel.currentPath
+            let target = self.panel
             group.notify(queue: .main) {
-                // Dropped back where they came from: nothing to copy.
-                let incoming = paths.filter { ($0 as NSString).deletingLastPathComponent != destination }
-                guard !incoming.isEmpty else { return }
-                FileOperationManager.shared.copy(incoming, to: destination)
+                DropboxIntegration.handleDrop(dropboxPaths: dropboxPaths, localPaths: paths, onto: target, viewModel: self.viewModel)
             }
             return true
         }
@@ -216,6 +228,30 @@ public struct FilePanelView: View {
                 .buttonStyle(.plain)
                 .help(vol.tcHeaderDescription())
             }
+
+            // Dropbox as a "drive": your Dropbox, folders shared with you and shared links.
+            Button {
+                focusThisPanel()
+                panel.openDropbox()
+            } label: {
+                let inDropbox = panel.dropboxLocation != nil
+                HStack(spacing: 3) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Dropbox")
+                        .font(.system(size: 11, weight: .bold))
+                        .lineLimit(1)
+                }
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Rectangle().fill(inDropbox ? palette.activeHeaderBackground.swiftUIColor : palette.toolbarBackground.swiftUIColor))
+                .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 1))
+                .foregroundColor(inDropbox ? palette.activeHeaderText.swiftUIColor : palette.regularFileText.swiftUIColor)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dropbox: your files, folders shared with you and shared links")
 
             Divider()
                 .frame(height: 14)
@@ -579,6 +615,8 @@ public struct FilePanelView: View {
             return "🔍 [\(title)]"
         case .remote(let profile, let remPath):
             return "🌐 \(profile.title):\(remPath)"
+        case .dropbox(let loc, _):
+            return "☁︎ " + loc.displayPath
         }
     }
 

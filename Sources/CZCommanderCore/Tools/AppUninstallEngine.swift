@@ -136,13 +136,34 @@ public enum AppUninstallEngine {
         return nil
     }
 
+    /// Only what macOS itself protects is refused: the /System volume and apps flagged by System
+    /// Integrity Protection (Safari and the other built-in apps). Apple apps from the App Store
+    /// (GarageBand, iMovie, Pages, Keynote, Numbers…) can be removed like any other app.
     public static func protectionReason(path: String, bundleID: String?) -> String? {
         if path.hasPrefix("/System/") { return "Part of macOS." }
-        if let id = bundleID?.lowercased() {
-            if id.hasPrefix("com.apple.") { return "Apple app that comes with macOS." }
-            if id == "com.czcommander.macos" { return "CZ.commander cannot uninstall itself." }
-        }
+        if isSIPProtected(path) { return "Protected by macOS (System Integrity Protection)." }
+        if bundleID?.lowercased() == "com.czcommander.macos" { return "CZ.commander cannot uninstall itself." }
         return nil
+    }
+
+    /// The "restricted" file flag set by System Integrity Protection.
+    public static func isSIPProtected(_ path: String) -> Bool {
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return false }
+        return (st.st_flags & UInt32(SF_RESTRICTED)) != 0
+    }
+
+    /// The error macOS gives when an app lacks the "App Management" permission to change or
+    /// remove other apps (Ventura and later), or plain file permissions are missing.
+    public static func isPermissionError(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == NSCocoaErrorDomain && (ns.code == NSFileWriteNoPermissionError || ns.code == NSFileReadNoPermissionError) {
+            return true
+        }
+        if ns.domain == NSPOSIXErrorDomain && (ns.code == Int(EPERM) || ns.code == Int(EACCES)) { return true }
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? Error { return isPermissionError(underlying) }
+        let text = ns.localizedDescription.lowercased()
+        return text.contains("not permitted") || text.contains("permission")
     }
 
     // MARK: Identity

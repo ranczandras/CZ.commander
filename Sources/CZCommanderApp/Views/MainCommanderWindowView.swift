@@ -159,7 +159,7 @@ public struct MainCommanderWindowView: View {
             .help("Target = Source")
 
             // Copy / move / unpack running in the background
-            FileOperationIndicator()
+            FileOperationIndicator(palette: palette)
 
             // Cleanup & Empty Trash
             quickToolButton(title: "Cleanup", symbol: "sparkles", help: "Find and delete junk: Trash, caches, logs, leftovers") {
@@ -461,7 +461,11 @@ public struct MainCommanderWindowView: View {
         case .youtubeDownloader:
             YouTubeDownloaderLauncher(viewModel: viewModel)
         case .fileOperationProgress:
-            FileOperationProgressView(viewModel: viewModel)
+            FileOperationProgressLauncher(viewModel: viewModel)
+        case .dropboxAccount:
+            DropboxAccountSheetView(viewModel: viewModel)
+        case .dropboxLink(let side):
+            DropboxLinkSheetView(viewModel: viewModel, side: side)
         case .appUninstaller:
             AppUninstallerLauncher(viewModel: viewModel)
         case .startup:
