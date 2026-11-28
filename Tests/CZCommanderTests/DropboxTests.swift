@@ -69,3 +69,18 @@ final class DropboxTests: XCTestCase {
         XCTAssertEqual(DropboxEntry.from(json: [".tag": "folder", "name": "Day 1"], in: .own("/"))?.isFolder, true)
     }
 }
+
+final class DropboxCredentialStoreTests: XCTestCase {
+    func testFileIsPrivate() throws {
+        // Uses the real path only when the override is set by the test scheme; here we check the helper directly.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("czc-dbx-\(UUID().uuidString).json")
+        setenv("CZ_DROPBOX_CREDENTIALS", url.path, 1)
+        defer { unsetenv("CZ_DROPBOX_CREDENTIALS"); try? FileManager.default.removeItem(at: url) }
+        DropboxKeychain.save("tok", account: "refresh_token")
+        XCTAssertEqual(DropboxKeychain.load(account: "refresh_token"), "tok")
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600)
+        DropboxKeychain.delete(account: "refresh_token")
+        XCTAssertNil(DropboxKeychain.load(account: "refresh_token"))
+    }
+}

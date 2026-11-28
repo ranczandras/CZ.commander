@@ -7,6 +7,8 @@ final class CZCommanderCoreTests: XCTestCase {
     override func setUpWithError() throws {
         tempRoot = (NSTemporaryDirectory() as NSString).appendingPathComponent("tc_tests_\(UUID().uuidString)")
         try FileManager.default.createDirectory(atPath: tempRoot, withIntermediateDirectories: true)
+        // Never load or write the user's real settings in tests.
+        setenv("CZ_CONFIG_PATH", (tempRoot as NSString).appendingPathComponent("config.json"), 1)
     }
 
     override func tearDownWithError() throws {

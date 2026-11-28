@@ -8,7 +8,7 @@ import Security
 // Dropbox) and shared links, and copy files in and out with the normal progress dialog.
 //
 // The app key belongs to the "CZ.commander" app in the Dropbox App Console; it is public by
-// design (PKCE needs no secret). The refresh token lives in the macOS Keychain.
+// design (PKCE needs no secret). The refresh token is kept in a 0600 file in Application Support.
 
 public enum DropboxConfig {
     public static let appKey = "sz3517amssvkl80"
@@ -137,7 +137,8 @@ public enum DropboxLocation: Equatable, Sendable {
 
     public var lastName: String {
         switch self {
-        case .own(let p), .namespace(_, let p), .link(_, let p): return (p as NSString).lastPathComponent
+        case .own(let p), .namespace(_, let p): return (p as NSString).lastPathComponent
+        case .link(let url, let p): return p.isEmpty ? Self.linkTitle(url) : (p as NSString).lastPathComponent
         case .sharedWithMe: return "Shared with me"
         }
     }
@@ -147,8 +148,20 @@ public enum DropboxLocation: Equatable, Sendable {
         case .own(let p): return "Dropbox:" + (p.isEmpty ? "/" : p)
         case .sharedWithMe: return "Dropbox: Shared with me"
         case .namespace(_, let p): return "Dropbox: Shared" + (p.isEmpty ? "/" : p)
-        case .link(_, let p): return "Dropbox: Link" + (p.isEmpty ? "/" : p)
+        case .link(let url, let p): return "Dropbox: " + Self.linkTitle(url) + (p.isEmpty ? "/" : p)
         }
+    }
+
+    // Names of shared folders / links, remembered when they are listed or opened.
+    private static let titlesLock = NSLock()
+    nonisolated(unsafe) private static var linkTitles: [String: String] = [:]
+
+    public static func rememberLinkTitle(_ title: String, for url: String) {
+        titlesLock.withLock { linkTitles[url] = title }
+    }
+
+    static func linkTitle(_ url: String) -> String {
+        titlesLock.withLock { linkTitles[url] } ?? "Shared link"
     }
 
     /// Writable through files/* (own Dropbox and shared folders you can edit).
@@ -177,7 +190,8 @@ public struct DropboxEntry: Sendable, Equatable {
     public func fileItem() -> FileItem {
         var item = FileItem(name: name, fullPath: location.fullPath, isDirectory: isFolder)
         item.size = size
-        if let modified { item.modificationDate = modified }
+        // Dropbox gives folders no date: show none instead of "now".
+        item.modificationDate = modified ?? .distantPast
         return item
     }
 
@@ -198,38 +212,91 @@ public struct DropboxEntry: Sendable, Equatable {
     }
 }
 
-// MARK: - Keychain
+// MARK: - Credential store
 
+/// The Dropbox refresh token and account name, in
+/// ~/Library/Application Support/CZ.commander/dropbox.json (readable by this user only, 0600).
+/// Not the Keychain: the app is self-signed, so macOS would ask for the Keychain password after
+/// every update. An older Keychain entry is moved here once.
 enum DropboxKeychain {
     static let service = "CZ.commander Dropbox"
 
+    static var fileURL: URL {
+        if let override = ProcessInfo.processInfo.environment["CZ_DROPBOX_CREDENTIALS"], !override.isEmpty {
+            return URL(fileURLWithPath: override)
+        }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("CZ.commander/dropbox.json")
+    }
+
+    private static let lock = NSLock()
+
+    private static func readAll() -> [String: String] {
+        guard let data = try? Data(contentsOf: fileURL),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
+            return migrateFromKeychain()
+        }
+        return dict
+    }
+
+    private static func writeAll(_ dict: [String: String]) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if dict.isEmpty {
+            try? fm.removeItem(at: fileURL)
+            return
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]) else { return }
+        // Create with 0600 before writing so the token is never readable by others.
+        if !fm.fileExists(atPath: fileURL.path) {
+            fm.createFile(atPath: fileURL.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        try? data.write(to: fileURL)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
     static func save(_ value: String, account: String) {
-        let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                   kSecAttrService as String: service,
-                                   kSecAttrAccount as String: account]
-        SecItemDelete(base as CFDictionary)
-        var add = base
-        add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(add as CFDictionary, nil)
+        lock.lock(); defer { lock.unlock() }
+        var all = readAll()
+        all[account] = value
+        writeAll(all)
     }
 
     static func load(account: String) -> String? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                kSecAttrService as String: service,
-                                kSecAttrAccount as String: account,
-                                kSecReturnData as String: true,
-                                kSecMatchLimit as String: kSecMatchLimitOne]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        lock.lock(); defer { lock.unlock() }
+        return readAll()[account]
     }
 
     static func delete(account: String) {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                kSecAttrService as String: service,
-                                kSecAttrAccount as String: account]
-        SecItemDelete(q as CFDictionary)
+        lock.lock(); defer { lock.unlock() }
+        var all = readAll()
+        all[account] = nil
+        writeAll(all)
+    }
+
+    /// Moves a token saved by an earlier build from the Keychain into the file (one prompt at most).
+    private static func migrateFromKeychain() -> [String: String] {
+        guard ProcessInfo.processInfo.environment["CZ_DROPBOX_CREDENTIALS"] == nil else { return [:] }
+        var out: [String: String] = [:]
+        for account in ["refresh_token", "account_name", "account_email"] {
+            let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account,
+                                    kSecReturnData as String: true,
+                                    kSecMatchLimit as String: kSecMatchLimitOne]
+            var result: CFTypeRef?
+            if SecItemCopyMatching(q as CFDictionary, &result) == errSecSuccess, let data = result as? Data,
+               let value = String(data: data, encoding: .utf8) {
+                out[account] = value
+            }
+            let del: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                      kSecAttrService as String: service,
+                                      kSecAttrAccount as String: account]
+            SecItemDelete(del as CFDictionary)
+        }
+        if !out.isEmpty { writeAll(out) }
+        return out
     }
 }
 
@@ -475,15 +542,27 @@ public final class DropboxClient: @unchecked Sendable {
     /// Every shared folder you are a member of, added to your Dropbox or not.
     private func listSharedWithMe() async throws -> [DropboxEntry] {
         var out: [DropboxEntry] = []
+        var seen = Set<String>()
         var json = try await rpc("sharing/list_folders", ["limit": 1000])
         var mountable = try? await rpc("sharing/list_mountable_folders", ["limit": 1000])
         while true {
             for page in [json, mountable ?? [:]] {
                 for case let e as [String: Any] in (page["entries"] as? [Any]) ?? [] {
                     guard let id = e["shared_folder_id"] as? String, let name = e["name"] as? String else { continue }
-                    if out.contains(where: { if case .namespace(let x, _) = $0.location { return x == id }; return false }) { continue }
+                    guard seen.insert(id).inserted else { continue }
                     let date = (e["time_invited"] as? String).flatMap { DropboxEntry.dateParser.date(from: $0) }
-                    out.append(DropboxEntry(name: name, isFolder: true, size: 0, modified: date, location: .namespace(id: id, path: "")))
+                    // Added to your Dropbox: open it by its path (writable). Not added: Dropbox only
+                    // serves it through the folder's own shared link (read / download).
+                    let location: DropboxLocation
+                    if let path = (e["path_display"] as? String) ?? (e["path_lower"] as? String), !path.isEmpty {
+                        location = .own(path)
+                    } else if let preview = e["preview_url"] as? String, !preview.isEmpty {
+                        location = .link(url: preview, path: "")
+                    } else {
+                        location = .namespace(id: id, path: "")
+                    }
+                    if case .link(let url, _) = location { DropboxLocation.rememberLinkTitle(name, for: url) }
+                    out.append(DropboxEntry(name: name, isFolder: true, size: 0, modified: date, location: location))
                 }
             }
             var more = false
@@ -501,7 +580,9 @@ public final class DropboxClient: @unchecked Sendable {
     /// Resolves a pasted shared link to its folder (or file) name.
     public func linkInfo(_ url: String) async throws -> (name: String, isFolder: Bool) {
         let json = try await rpc("sharing/get_shared_link_metadata", ["url": url])
-        return ((json["name"] as? String) ?? "Shared link", (json[".tag"] as? String) == "folder")
+        let name = (json["name"] as? String) ?? "Shared link"
+        DropboxLocation.rememberLinkTitle(name, for: url)
+        return (name, (json[".tag"] as? String) == "folder")
     }
 
     // MARK: Changes

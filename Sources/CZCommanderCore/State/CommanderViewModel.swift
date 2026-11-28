@@ -267,7 +267,8 @@ public final class PanelController: ObservableObject {
     @Published public var tabs: [FolderTab]
     @Published public var activeTabIndex: Int = 0
     @Published public var rawItems: [FileItem] = []
-    @Published public var displayedItems: [FileItem] = []
+    /// The status bar listens to the cursor signal, so a new list (filter, async Dropbox load) pings it too.
+    @Published public var displayedItems: [FileItem] = [] { didSet { cursorSignal.notify() } }
     // Cursor and selection are deliberately NOT @Published: moving the cursor must not re-render
     // the whole panel UI. Changes go through `cursorSignal`; the list view updates its rows
     // directly and only small views (status bar, Thumbs grid, Quick View) observe the signal.

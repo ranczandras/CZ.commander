@@ -294,6 +294,8 @@ public struct FileItem: Identifiable, Hashable, Codable, Sendable {
 
     public var formattedModificationDate: String {
         if isParentDirectoryEntry { return "" }
+        // Virtual rows (Dropbox "Shared with me", "Loading…") carry no date.
+        if modificationDate == .distantPast { return "" }
         return Self.tcDateFormatter.string(from: modificationDate)
     }
 }

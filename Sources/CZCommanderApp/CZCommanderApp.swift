@@ -608,10 +608,12 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double(n) * 0.15) {
                         let isBack = ch == "<"
                         let isF3 = ch == "|"
-                        let text = isBack ? "\u{7F}" : (isF3 ? "\u{F706}" : String(ch))
+                        let isReturn = ch == "^"
+                        let isF5 = ch == "%"
+                        let text = isBack ? "\u{7F}" : (isF3 ? "\u{F706}" : (isReturn ? "\r" : (isF5 ? "\u{F708}" : String(ch))))
                         if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                                                      windowNumber: window.windowNumber, context: nil, characters: text,
-                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: isBack ? 51 : (isF3 ? 99 : 0)) {
+                                                     charactersIgnoringModifiers: text, isARepeat: false, keyCode: isBack ? 51 : (isF3 ? 99 : (isReturn ? 36 : (isF5 ? 96 : 0)))) {
                             NSApp.postEvent(ev, atStart: false)
                         }
                     }
