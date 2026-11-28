@@ -140,3 +140,63 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertNil(p.remainingSeconds)
     }
 }
+
+final class TransferConflictTests: XCTestCase {
+    private var root: String!
+    private let fm = FileManager.default
+
+    override func setUpWithError() throws {
+        root = fm.temporaryDirectory.appendingPathComponent("czc-conf-\(UUID().uuidString)").path
+        for d in ["src", "dst"] { try fm.createDirectory(atPath: root + "/" + d, withIntermediateDirectories: true) }
+        for n in ["a", "b", "c"] {
+            fm.createFile(atPath: root + "/src/\(n).txt", contents: Data("new-\(n)".utf8))
+            fm.createFile(atPath: root + "/dst/\(n).txt", contents: Data("old-\(n)".utf8))
+        }
+        fm.createFile(atPath: root + "/src/d.txt", contents: Data("only-new".utf8))
+    }
+
+    override func tearDownWithError() throws { try? fm.removeItem(atPath: root) }
+
+    private func text(_ rel: String) -> String? { try? String(contentsOfFile: root + "/" + rel, encoding: .utf8) }
+
+    private func run(_ answers: [TransferConflictDecision]) throws -> (asked: Int, progress: FileOperationProgress) {
+        let control = TransferControl()
+        let lock = NSLock()
+        var queue = answers
+        var asked = 0
+        control.conflictResolver = { _ in
+            lock.withLock { asked += 1; return queue.isEmpty ? .skip : queue.removeFirst() }
+        }
+        var last = FileOperationProgress()
+        let srcs = ["a", "b", "c", "d"].map { root + "/src/\($0).txt" }
+        try TransferEngine.copyOrMove(sources: srcs, to: root + "/dst", isMove: false,
+                                      options: FileOperationOptions(overwritePolicy: .ask), control: control) { last = $0 }
+        return (asked, last)
+    }
+
+    func testSkipAllAsksOnceAndCopiesOnlyMissing() throws {
+        let r = try run([.skipAll])
+        XCTAssertEqual(r.asked, 1)
+        XCTAssertEqual(text("dst/a.txt"), "old-a")
+        XCTAssertEqual(text("dst/c.txt"), "old-c")
+        XCTAssertEqual(text("dst/d.txt"), "only-new")
+        XCTAssertEqual(r.progress.skippedFiles, 3)
+    }
+
+    func testOverwriteThenSkipThenRename() throws {
+        let r = try run([.overwrite, .skip, .rename])
+        XCTAssertEqual(r.asked, 3)
+        XCTAssertEqual(text("dst/a.txt"), "new-a")
+        XCTAssertEqual(text("dst/b.txt"), "old-b")
+        XCTAssertEqual(text("dst/c.txt"), "old-c")
+        let names = try fm.contentsOfDirectory(atPath: root + "/dst")
+        XCTAssertEqual(names.filter { $0.hasPrefix("c") }.count, 2, "renamed copy next to the original")
+        XCTAssertEqual(r.progress.skippedFiles, 1)
+    }
+
+    func testCancelStops() {
+        XCTAssertThrowsError(try run([.cancel])) { XCTAssertTrue($0 is TransferCancelledError) }
+        XCTAssertEqual(text("dst/a.txt"), "old-a")
+        XCTAssertNil(text("dst/d.txt"))
+    }
+}

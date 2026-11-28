@@ -9,7 +9,7 @@ public struct CopyMoveSheetView: View {
     @State private var destinationDir: String
     public let isMove: Bool
     @State private var targetMask: String = "*.*"
-    @State private var overwritePolicy: OverwritePolicy = .overwriteAll
+    @State private var overwritePolicy: OverwritePolicy = .ask
     @State private var preserveTimestamps: Bool = true
     @State private var preservePermissions: Bool = true
     @State private var verifyAfterCopy: Bool = false

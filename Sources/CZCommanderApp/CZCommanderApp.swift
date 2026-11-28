@@ -561,9 +561,12 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 for n in 1...3 {
                     FileManager.default.createFile(atPath: src + "/Footage/clip\(n).mov", contents: Data(count: 300_000 * n))
                 }
+                // An existing target, so the "File exists" question shows.
+                let dst = (dir as NSString).appendingPathComponent("fileop-dst")
+                try? FileManager.default.createDirectory(atPath: dst + "/Footage", withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: dst + "/Footage/clip1.mov", contents: Data(count: 1000))
                 let m = FileOperationManager.shared
-                m.copy([src + "/Footage"], to: (dir as NSString).appendingPathComponent("fileop-dst"))
-                m.togglePause()
+                m.copy([src + "/Footage"], to: dst)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
             case "uninstaller":
                 AppUninstallerWindowController.show(viewModel: vm)

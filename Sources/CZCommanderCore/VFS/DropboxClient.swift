@@ -616,6 +616,14 @@ public final class DropboxClient: @unchecked Sendable {
         _ = try await rpc("files/copy_v2", ["from_path": a, "to_path": b, "autorename": true])
     }
 
+    /// Size and date of an existing file / folder, nil when nothing is there.
+    public func metadata(_ location: DropboxLocation) async -> (size: Int64, modified: Date?)? {
+        guard let path = location.apiPath, !path.isEmpty,
+              let json = try? await rpc("files/get_metadata", ["path": path]) else { return nil }
+        let date = (json["server_modified"] as? String).flatMap { DropboxEntry.dateParser.date(from: $0) }
+        return ((json["size"] as? NSNumber)?.int64Value ?? 0, date)
+    }
+
     public func exists(_ location: DropboxLocation) async -> Bool {
         guard let path = location.apiPath, !path.isEmpty else { return true }
         return (try? await rpc("files/get_metadata", ["path": path])) != nil

@@ -22,6 +22,7 @@ public enum DropboxTransfer {
     public static func download(
         _ items: [DropboxEntry],
         to localDir: String,
+        options: FileOperationOptions = FileOperationOptions(overwritePolicy: .ask),
         client: DropboxClient = .shared,
         control: TransferControl? = nil,
         progress: ((FileOperationProgress) -> Void)? = nil
@@ -71,7 +72,7 @@ public enum DropboxTransfer {
         }
         for file in files {
             try checkpoint(control, reporter)
-            let target = (localDir as NSString).appendingPathComponent(file.relativePath)
+            var target = (localDir as NSString).appendingPathComponent(file.relativePath)
             reporter.progress.currentFileName = (file.relativePath as NSString).lastPathComponent
             reporter.progress.currentSourcePath = file.location.displayPath
             reporter.progress.currentDestinationPath = target
@@ -79,11 +80,31 @@ public enum DropboxTransfer {
             reporter.progress.currentFileTotal = file.size
             reporter.emit()
 
-            // Already complete from an earlier run: skip.
-            if let attrs = try? fm.attributesOfItem(atPath: target), (attrs[.size] as? NSNumber)?.int64Value == file.size {
-                reporter.progress.processedBytes += file.size
-                reporter.progress.processedFiles += 1
-                continue
+            // The file exists already: ask (or follow the chosen "… All" answer / policy).
+            if let attrs = try? fm.attributesOfItem(atPath: target) {
+                let conflict = TransferConflict(
+                    sourceName: (file.relativePath as NSString).lastPathComponent, sourcePath: file.location.displayPath,
+                    sourceSize: file.size, sourceDate: file.modified, targetPath: target,
+                    targetSize: (attrs[.size] as? NSNumber)?.int64Value, targetDate: attrs[.modificationDate] as? Date)
+                let action = (control ?? TransferControl()).decide(conflict, policy: options.overwritePolicy)
+                switch action {
+                case .cancel:
+                    throw TransferCancelledError()
+                case .skip:
+                    reporter.progress.processedBytes += file.size
+                    reporter.progress.processedFiles += 1
+                    reporter.progress.skippedFiles += 1
+                    reporter.emit()
+                    continue
+                case .renameCopy:
+                    target = FileSystemEngine.uniqueFilePath(for: target)
+                    reporter.progress.currentDestinationPath = target
+                case .renameExisting:
+                    try fm.moveItem(atPath: target, toPath: FileSystemEngine.uniqueFilePath(for: target))
+                case .overwrite:
+                    // A leftover part file belongs to the old target: start fresh.
+                    try? fm.removeItem(atPath: target + ".czpart")
+                }
             }
             try fm.createDirectory(atPath: (target as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
             try await downloadFile(file, to: target, client: client, control: control, reporter: reporter)
@@ -214,20 +235,28 @@ public enum DropboxTransfer {
             reporter.progress.currentFileTotal = file.size
             reporter.emit()
 
-            let mode: String
+            var mode = "add"
             var autorename = false
-            switch options.overwritePolicy {
-            case .skipAll, .overwriteOlder:
-                if await client.exists(file.remote) {
+            if let existing = await client.metadata(file.remote) {
+                let localDate = (try? fm.attributesOfItem(atPath: file.local)[.modificationDate]) as? Date
+                let conflict = TransferConflict(
+                    sourceName: (file.local as NSString).lastPathComponent, sourcePath: file.local,
+                    sourceSize: file.size, sourceDate: localDate, targetPath: file.remote.displayPath,
+                    targetSize: existing.size, targetDate: existing.modified)
+                switch (control ?? TransferControl()).decide(conflict, policy: options.overwritePolicy) {
+                case .cancel:
+                    throw TransferCancelledError()
+                case .skip:
                     reporter.progress.processedBytes += file.size
                     reporter.progress.processedFiles += 1
+                    reporter.progress.skippedFiles += 1
+                    reporter.emit()
                     continue
+                case .renameCopy, .renameExisting:
+                    autorename = true
+                case .overwrite:
+                    mode = "overwrite"
                 }
-                mode = "add"
-            case .autoRenameSource, .autoRenameTarget:
-                mode = "add"; autorename = true
-            case .overwriteAll, .ask:
-                mode = "overwrite"
             }
             try await uploadFile(local: file.local, remote: file.remote, size: file.size, mode: mode, autorename: autorename,
                                  client: client, control: control, reporter: reporter)

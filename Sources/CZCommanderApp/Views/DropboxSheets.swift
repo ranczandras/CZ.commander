@@ -37,7 +37,7 @@ enum DropboxIntegration {
                 }
                 let paths = items.map(\.fullPath)
                 FileOperationManager.shared.dropbox(
-                    .dropboxUpload(paths: paths, destination: dest, options: FileOperationOptions(), trashAfter: isMove),
+                    .dropboxUpload(paths: paths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: isMove),
                     title: (isMove ? "Move " : "Upload ") + FileOperationManager.countText(paths) + " to " + dest.displayPath)
             case (.some, .some(let dest)):
                 guard dest.supportsWrite, entries.allSatisfy({ $0.location.supportsWrite }) else {

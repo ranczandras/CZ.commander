@@ -27,6 +27,38 @@ public enum OverwritePolicy: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// A target that already exists, shown in the "File exists" question.
+public struct TransferConflict: Sendable, Equatable {
+    public let sourceName: String
+    public let sourcePath: String
+    public let sourceSize: Int64?
+    public let sourceDate: Date?
+    public let targetPath: String
+    public let targetSize: Int64?
+    public let targetDate: Date?
+
+    public init(sourceName: String, sourcePath: String, sourceSize: Int64?, sourceDate: Date?,
+                targetPath: String, targetSize: Int64?, targetDate: Date?) {
+        self.sourceName = sourceName
+        self.sourcePath = sourcePath
+        self.sourceSize = sourceSize
+        self.sourceDate = sourceDate
+        self.targetPath = targetPath
+        self.targetSize = targetSize
+        self.targetDate = targetDate
+    }
+}
+
+/// The user's answer in the "File exists" question (Total Commander's buttons).
+public enum TransferConflictDecision: Sendable {
+    case overwrite, overwriteAll, overwriteAllOlder, skip, skipAll, rename, renameAll, cancel
+}
+
+/// What the copy loop does with one existing target.
+public enum TransferConflictAction: Sendable, Equatable {
+    case overwrite, skip, renameCopy, renameExisting, cancel
+}
+
 public struct FileOperationOptions: Codable, Sendable {
     public var targetMask: String
     public var overwritePolicy: OverwritePolicy
@@ -69,6 +101,8 @@ public struct FileOperationProgress: Sendable {
     public var elapsedSeconds: TimeInterval = 0
     /// Still counting files and bytes before the copy starts.
     public var isScanning: Bool = false
+    /// Files left alone because the target existed (Skip / Skip all / older).
+    public var skippedFiles: Int = 0
 
     public var currentFileFraction: Double {
         currentFileTotal > 0 ? min(1, Double(currentFileBytes) / Double(currentFileTotal)) : 0

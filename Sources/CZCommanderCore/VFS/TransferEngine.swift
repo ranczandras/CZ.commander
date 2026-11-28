@@ -11,8 +11,48 @@ public final class TransferControl: @unchecked Sendable {
     private let condition = NSCondition()
     private var cancelled = false
     private var paused = false
+    private var stickyPolicy: OverwritePolicy?
+
+    /// Asks the user about an existing target (set by the app; called on the transfer thread and
+    /// expected to block until answered). Without it `.ask` overwrites, as before.
+    public var conflictResolver: (@Sendable (TransferConflict) -> TransferConflictDecision)?
 
     public init() {}
+
+    /// Decides what to do with an existing target, asking when the policy is `.ask`. "… All"
+    /// answers stick for the rest of the job.
+    public func decide(_ conflict: TransferConflict, policy: OverwritePolicy) -> TransferConflictAction {
+        condition.lock()
+        let effective = stickyPolicy ?? policy
+        condition.unlock()
+        switch effective {
+        case .overwriteAll: return .overwrite
+        case .skipAll: return .skip
+        case .autoRenameSource: return .renameCopy
+        case .autoRenameTarget: return .renameExisting
+        case .overwriteOlder: return Self.olderAction(conflict)
+        case .ask:
+            guard let resolver = conflictResolver else { return .overwrite }
+            let answer = resolver(conflict)
+            func stick(_ p: OverwritePolicy) { condition.lock(); stickyPolicy = p; condition.unlock() }
+            switch answer {
+            case .overwrite: return .overwrite
+            case .overwriteAll: stick(.overwriteAll); return .overwrite
+            case .overwriteAllOlder: stick(.overwriteOlder); return Self.olderAction(conflict)
+            case .skip: return .skip
+            case .skipAll: stick(.skipAll); return .skip
+            case .rename: return .renameCopy
+            case .renameAll: stick(.autoRenameSource); return .renameCopy
+            case .cancel: cancel(); return .cancel
+            }
+        }
+    }
+
+    /// Overwrite only when the source is newer than the target.
+    static func olderAction(_ c: TransferConflict) -> TransferConflictAction {
+        guard let s = c.sourceDate, let t = c.targetDate else { return .overwrite }
+        return s > t.addingTimeInterval(1) ? .overwrite : .skip
+    }
 
     public var isCancelled: Bool {
         condition.lock(); defer { condition.unlock() }
@@ -175,7 +215,7 @@ public enum TransferEngine {
             reporter.progress.currentDestinationPath = top.dst
             try checkpoint(control, reporter)
             if top.rename {
-                if let final = try renameTop(src: top.src, dst: top.dst, options: options, reporter: reporter) {
+                if let final = try renameTop(src: top.src, dst: top.dst, options: options, reporter: reporter, reporterControl: control) {
                     created.append(final)
                 }
                 continue
@@ -221,13 +261,16 @@ public enum TransferEngine {
 
     // MARK: Rename (same-volume move)
 
-    static func renameTop(src: String, dst: String, options: FileOperationOptions, reporter: TransferReporter) throws -> String? {
+    static func renameTop(src: String, dst: String, options: FileOperationOptions, reporter: TransferReporter,
+                          reporterControl: TransferControl? = nil) throws -> String? {
         reporter.progress.currentFileName = (src as NSString).lastPathComponent
         reporter.progress.currentSourcePath = src
         reporter.progress.currentDestinationPath = dst
         reporter.emit()
-        guard let target = try resolveConflict(src: src, dst: dst, policy: options.overwritePolicy, mergeDirectories: false) else {
+        guard let target = try resolveConflict(src: src, dst: dst, policy: options.overwritePolicy, mergeDirectories: false,
+                                               control: reporterControl) else {
             reporter.progress.processedFiles += 1
+            reporter.progress.skippedFiles += 1
             return nil
         }
         try FileManager.default.moveItem(atPath: src, toPath: target)
@@ -253,7 +296,8 @@ public enum TransferEngine {
         }
         let isDir = (st.st_mode & S_IFMT) == S_IFDIR
 
-        guard let target = try resolveConflict(src: src, dst: dst, policy: options.overwritePolicy, mergeDirectories: isDir) else {
+        guard let target = try resolveConflict(src: src, dst: dst, policy: options.overwritePolicy, mergeDirectories: isDir,
+                                               control: control) else {
             // Skipped: count its bytes as done so the total still reaches 100%.
             if isDir {
                 let skipped = Int64(FileSystemEngine.calculateDirectorySize(at: src))
@@ -261,6 +305,7 @@ public enum TransferEngine {
             } else {
                 reporter.progress.processedBytes += Int64(st.st_size)
                 reporter.progress.processedFiles += 1
+                reporter.progress.skippedFiles += 1
             }
             return nil
         }
@@ -289,27 +334,34 @@ public enum TransferEngine {
         return target
     }
 
-    /// Applies the overwrite policy when `dst` exists. Returns where to write, or nil to skip.
-    /// Folders onto folders merge (their files are checked one by one).
-    static func resolveConflict(src: String, dst: String, policy: OverwritePolicy, mergeDirectories: Bool) throws -> String? {
+    /// Applies the overwrite policy (asking the user for `.ask`) when `dst` exists. Returns where
+    /// to write, or nil to skip. Folders onto folders merge (their files are checked one by one).
+    static func resolveConflict(src: String, dst: String, policy: OverwritePolicy, mergeDirectories: Bool,
+                                control: TransferControl? = nil) throws -> String? {
         var dstStat = stat()
         guard lstat(dst, &dstStat) == 0 else { return dst }
         let dstIsDir = (dstStat.st_mode & S_IFMT) == S_IFDIR
         if mergeDirectories && dstIsDir { return dst }
-        switch policy {
-        case .skipAll:
+        var srcStat = stat()
+        let hasSrc = lstat(src, &srcStat) == 0
+        let conflict = TransferConflict(
+            sourceName: (src as NSString).lastPathComponent, sourcePath: src,
+            sourceSize: hasSrc ? Int64(srcStat.st_size) : nil,
+            sourceDate: hasSrc ? Date(timeIntervalSince1970: TimeInterval(srcStat.st_mtimespec.tv_sec)) : nil,
+            targetPath: dst, targetSize: Int64(dstStat.st_size),
+            targetDate: Date(timeIntervalSince1970: TimeInterval(dstStat.st_mtimespec.tv_sec)))
+        let action = (control ?? TransferControl()).decide(conflict, policy: policy)
+        switch action {
+        case .skip:
             return nil
-        case .overwriteOlder:
-            var srcStat = stat()
-            if lstat(src, &srcStat) == 0, srcStat.st_mtimespec.tv_sec <= dstStat.st_mtimespec.tv_sec { return nil }
-            try FileSystemEngine.removeExistingUnlockingIfNeeded(atPath: dst)
-            return dst
-        case .autoRenameSource:
+        case .cancel:
+            throw TransferCancelledError()
+        case .renameCopy:
             return FileSystemEngine.uniqueFilePath(for: dst)
-        case .autoRenameTarget:
+        case .renameExisting:
             try FileManager.default.moveItem(atPath: dst, toPath: FileSystemEngine.uniqueFilePath(for: dst))
             return dst
-        case .overwriteAll, .ask:
+        case .overwrite:
             try FileSystemEngine.removeExistingUnlockingIfNeeded(atPath: dst)
             return dst
         }

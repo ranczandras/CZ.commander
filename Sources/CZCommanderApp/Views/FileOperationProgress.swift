@@ -42,6 +42,15 @@ final class FileOperationManager: ObservableObject {
     @Published private(set) var outcome: Outcome = .running
     @Published private(set) var isPaused = false
     @Published private(set) var queued: [Job] = []
+    /// A target that exists; the job waits until `answer(_:)` is called.
+    @Published private(set) var pendingConflict: TransferConflict? = nil
+    /// Hand-over between the UI (writes) and the waiting transfer thread (reads).
+    final class AnswerBox: @unchecked Sendable {
+        let lock = NSLock()
+        var value: TransferConflictDecision = .skip
+        let signal = DispatchSemaphore(value: 0)
+    }
+    nonisolated let answerBox = AnswerBox()
 
     private var control = TransferControl()
     weak var viewModel: CommanderViewModel?
@@ -50,13 +59,13 @@ final class FileOperationManager: ObservableObject {
 
     // MARK: Start
 
-    func copy(_ sources: [String], to destination: String, options: FileOperationOptions = FileOperationOptions(),
+    func copy(_ sources: [String], to destination: String, options: FileOperationOptions = FileOperationOptions(overwritePolicy: .ask),
               background: Bool = false) {
         enqueue(Job(kind: .copy(sources: sources, destination: destination, options: options),
                     title: "Copy " + Self.countText(sources) + " to " + Self.short(destination)), background: background)
     }
 
-    func move(_ sources: [String], to destination: String, options: FileOperationOptions = FileOperationOptions(),
+    func move(_ sources: [String], to destination: String, options: FileOperationOptions = FileOperationOptions(overwritePolicy: .ask),
               background: Bool = false) {
         enqueue(Job(kind: .move(sources: sources, destination: destination, options: options),
                     title: "Move " + Self.countText(sources) + " to " + Self.short(destination)), background: background)
@@ -94,8 +103,30 @@ final class FileOperationManager: ObservableObject {
     }
 
     func cancel() {
+        if pendingConflict != nil { answer(.cancel) }
         control.cancel()
         isPaused = false
+    }
+
+    /// The user's choice in the "File exists" panel.
+    func answer(_ decision: TransferConflictDecision) {
+        guard pendingConflict != nil else { return }
+        answerBox.lock.withLock { answerBox.value = decision }
+        pendingConflict = nil
+        answerBox.signal.signal()
+    }
+
+    /// Called on the transfer thread: shows the question and blocks until it is answered.
+    nonisolated static func ask(_ conflict: TransferConflict, box: AnswerBox) -> TransferConflictDecision {
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                let m = FileOperationManager.shared
+                m.pendingConflict = conflict
+                m.showDialog()
+            }
+        }
+        box.signal.wait()
+        return box.lock.withLock { box.value }
     }
 
     func cancelQueued(_ id: UUID) {
@@ -130,6 +161,8 @@ final class FileOperationManager: ObservableObject {
         progress = FileOperationProgress()
         progress.isScanning = true
         control = TransferControl()
+        let box = answerBox
+        control.conflictResolver = { conflict in FileOperationManager.ask(conflict, box: box) }
         let control = self.control
         if show { showDialog() }
 
@@ -160,7 +193,9 @@ final class FileOperationManager: ObservableObject {
                     try ArchiveEngine.unpackArchive(archivePath: archive, toDirectory: destination, specificEntries: entries,
                                                     control: control, progress: report)
                 case .dropboxDownload(let items, let destination, let deleteAfter, let openAfter):
-                    let paths = try await DropboxTransfer.download(items, to: destination, control: control, progress: report)
+                    let paths = try await DropboxTransfer.download(items, to: destination,
+                                                                   options: FileOperationOptions(overwritePolicy: openAfter ? .overwriteAll : .ask),
+                                                                   control: control, progress: report)
                     if deleteAfter {
                         for item in items { try await DropboxClient.shared.delete(item.location) }
                     }
@@ -203,7 +238,10 @@ final class FileOperationManager: ObservableObject {
         case .cancelled:
             vm.statusBannerMessage = job.title + ": cancelled"
         case .finished, .running:
-            vm.statusBannerMessage = job.title + ": done"
+            let p = progress
+            let copied = max(0, p.processedFiles - p.skippedFiles)
+            vm.statusBannerMessage = job.title + ": done – \(copied) file(s) copied"
+                + (p.skippedFiles > 0 ? ", \(p.skippedFiles) skipped (already there)" : "")
         }
         if let next = queued.first {
             queued.removeFirst()
@@ -265,7 +303,9 @@ struct FileOperationProgressView: View {
                 }
             }
 
-            if case .failed(let message) = manager.outcome, manager.current == nil {
+            if let conflict = manager.pendingConflict {
+                conflictPanel(conflict)
+            } else if case .failed(let message) = manager.outcome, manager.current == nil {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
                     Text(message)
@@ -307,6 +347,68 @@ struct FileOperationProgressView: View {
     }
 
     @State private var lastTitle = ""
+
+    // MARK: File exists
+
+    private func conflictPanel(_ c: TransferConflict) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
+                Text("File exists").font(.system(size: 13, weight: .bold))
+            }
+            Text(c.sourceName).font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.middle)
+            conflictRow("Overwrite:", c.targetPath, c.targetSize, c.targetDate,
+                        newer: (c.targetDate ?? .distantPast) > (c.sourceDate ?? .distantPast))
+            conflictRow("With:", c.sourcePath, c.sourceSize, c.sourceDate,
+                        newer: (c.sourceDate ?? .distantPast) > (c.targetDate ?? .distantPast))
+            HStack(spacing: 6) {
+                Button("Overwrite") { manager.answer(.overwrite) }
+                    .buttonStyle(SquareProminentButtonStyle())
+                    .keyboardShortcut(.defaultAction)
+                Button("Overwrite All") { manager.answer(.overwriteAll) }
+                Button("Overwrite All Older") { manager.answer(.overwriteAllOlder) }
+                    .help("Overwrite only where the target is older than the source, for all files")
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Button("Skip") { manager.answer(.skip) }
+                Button("Skip All") { manager.answer(.skipAll) }
+                    .help("Keep every file that already exists; copy only what is missing")
+                Button("Rename") { manager.answer(.rename) }
+                    .help("Keep both: the copy gets a new name")
+                Button("Rename All") { manager.answer(.renameAll) }
+                Spacer()
+                Button("Cancel") { manager.cancel() }
+            }
+        }
+        .padding(10)
+        .background(Rectangle().fill(Color.orange.opacity(0.08)))
+        .overlay(Rectangle().stroke(Color.orange.opacity(0.5), lineWidth: 1))
+    }
+
+    private static let conflictDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    private func conflictRow(_ label: String, _ path: String, _ size: Int64?, _ date: Date?, newer: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(label).font(.system(size: 11, weight: .semibold)).frame(width: 66, alignment: .leading)
+                Text(path).font(.system(size: 10.5, design: .monospaced)).lineLimit(1).truncationMode(.head).help(path)
+            }
+            HStack(spacing: 10) {
+                Spacer().frame(width: 66)
+                Text(size.map { FileItem.formatByteCount($0) + " (\($0) bytes)" } ?? "size unknown")
+                    .font(.system(size: 10.5, design: .monospaced))
+                Text(date.map { Self.conflictDate.string(from: $0) } ?? "")
+                    .font(.system(size: 10.5, design: .monospaced))
+                if newer { Text("newer").font(.system(size: 9.5, weight: .bold)).foregroundColor(.green) }
+            }
+            .foregroundColor(.secondary)
+        }
+    }
 
     private var icon: String {
         switch manager.current?.kind {
