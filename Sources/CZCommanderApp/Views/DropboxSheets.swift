@@ -81,7 +81,7 @@ struct DropboxAccountSheetView: View {
                         Text(email).font(.system(size: 11)).foregroundColor(.secondary)
                     }
                 }
-                Text("Open Dropbox in the active panel. Copy with F5 / F6 between Dropbox and a local panel. \"⇄ Shared with me\" keeps the shared links you added with \"＋ Add shared link…\".")
+                Text("Open Dropbox in the active panel. Copy with F5 / F6 between Dropbox and a local panel. \"⇄ Shared with me\" keeps the shared links you add there with \"＋ Add shared link…\".")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
