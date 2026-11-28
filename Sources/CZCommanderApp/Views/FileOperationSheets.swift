@@ -192,6 +192,22 @@ public struct MkDirSheetView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Create (OK)") {
+                    if let loc = DropboxLocation(fullPath: baseDir) {
+                        let name = folderExpression.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !name.isEmpty, !name.contains("/") else { errorMessage = "Enter a folder name."; return }
+                        let panel = viewModel.activePanel
+                        Task {
+                            do {
+                                try await DropboxClient.shared.createFolder(loc.appending(name))
+                                panel.refreshDropbox()
+                                panel.reload(selectingItemNamed: name)
+                                dismiss()
+                            } catch {
+                                errorMessage = error.localizedDescription
+                            }
+                        }
+                        return
+                    }
                     do {
                         let created = try FileSystemEngine.createDirectories(expression: folderExpression, in: baseDir)
                         let firstName = created.first.map { ($0 as NSString).lastPathComponent }

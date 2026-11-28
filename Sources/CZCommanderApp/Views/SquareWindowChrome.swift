@@ -33,6 +33,7 @@ enum MainWindowController {
                 CommanderKeyboardRouter.shared.viewModel = viewModel
                 viewModel.mediaPreviewHandler = { panel in QuickLookController.shared.previewMedia(in: panel) }
                 FileOperationManager.shared.viewModel = viewModel
+                DropboxIntegration.install(viewModel: viewModel)
                 viewModel.transferHandler = { sources, destination, isMove, options in
                     if isMove {
                         FileOperationManager.shared.move(sources, to: destination, options: options, background: true)

@@ -217,6 +217,30 @@ public struct FilePanelView: View {
                 .help(vol.tcHeaderDescription())
             }
 
+            // Dropbox as a "drive": your Dropbox, folders shared with you and shared links.
+            Button {
+                focusThisPanel()
+                panel.openDropbox()
+            } label: {
+                let inDropbox = panel.dropboxLocation != nil
+                HStack(spacing: 3) {
+                    Image(systemName: "shippingbox.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Dropbox")
+                        .font(.system(size: 11, weight: .bold))
+                        .lineLimit(1)
+                }
+                .fixedSize()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2.5)
+                .background(Rectangle().fill(inDropbox ? palette.activeHeaderBackground.swiftUIColor : palette.toolbarBackground.swiftUIColor))
+                .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 1))
+                .foregroundColor(inDropbox ? palette.activeHeaderText.swiftUIColor : palette.regularFileText.swiftUIColor)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Dropbox: your files, folders shared with you and shared links")
+
             Divider()
                 .frame(height: 14)
 
@@ -579,6 +603,8 @@ public struct FilePanelView: View {
             return "🔍 [\(title)]"
         case .remote(let profile, let remPath):
             return "🌐 \(profile.title):\(remPath)"
+        case .dropbox(let loc, _):
+            return "☁︎ " + loc.displayPath
         }
     }
 

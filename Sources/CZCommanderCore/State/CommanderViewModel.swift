@@ -71,6 +71,8 @@ public enum PanelVFSMode: Equatable, Sendable {
     case archive(archivePath: String, internalDirectory: String)
     case searchResults(title: String, items: [FileItem], originPath: String)
     case remote(profile: RemoteConnectionProfile, remotePath: String)
+    /// Dropbox place; `origin` is the local folder to return to.
+    case dropbox(location: DropboxLocation, origin: String)
 }
 
 public struct FolderTab: Identifiable, Sendable {
@@ -155,6 +157,8 @@ public struct FolderTab: Identifiable, Sendable {
             return prefix + "🔍 \(title)"
         case .remote(let profile, let remPath):
             return prefix + "🌐 \(profile.title):\(remPath)"
+        case .dropbox(let loc, _):
+            return prefix + "☁︎ " + (loc == .own("/") ? "Dropbox" : loc.lastName)
         }
     }
 }
@@ -406,6 +410,11 @@ public final class PanelController: ObservableObject {
                 rawItems = withParent
             case .remote(let profile, let remPath):
                 rawItems = try RemoteConnectionEngine.listDirectory(profile: profile, remotePath: remPath)
+            case .dropbox(let loc, let origin):
+                currentVolumeInfo = nil
+                let (items, err) = dropboxRawItems(loc, origin: origin)
+                rawItems = items
+                if let err { errorMessage = err }
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -525,6 +534,10 @@ public final class PanelController: ObservableObject {
         recordHistory: Bool = true,
         selectingChildNamed childName: String? = nil
     ) {
+        if DropboxLocation.isDropboxPath(path), let loc = DropboxLocation(fullPath: path) {
+            openDropbox(loc, selecting: childName)
+            return
+        }
         let stdPath = (path as NSString).standardizingPath
         guard FileManager.default.fileExists(atPath: stdPath) else { return }
 
@@ -607,6 +620,11 @@ public final class PanelController: ObservableObject {
                 cursorIndex = 0
                 reload()
             }
+
+        case .dropbox:
+            if !enterDropboxItem(item) {
+                DropboxPanelCache.shared.onOpenFile?(item, self)
+            }
         }
     }
 
@@ -649,6 +667,9 @@ public final class PanelController: ObservableObject {
             let parent = (remPath as NSString).deletingLastPathComponent
             activeTab.vfsMode = .remote(profile: profile, remotePath: parent.isEmpty ? "/" : parent)
             reload()
+
+        case .dropbox(let loc, let origin):
+            dropboxGoUp(loc, origin: origin)
         }
     }
 
@@ -1093,6 +1114,8 @@ public enum ActiveCommanderSheet: Identifiable {
     case cleanup
     case emptyTrash
     case youtubeDownloader
+    case dropboxAccount
+    case dropboxLink(side: PanelSide)
     case fileOperationProgress
     case appUninstaller
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
@@ -1131,6 +1154,8 @@ public enum ActiveCommanderSheet: Identifiable {
         case .cleanup: return "cleanup"
         case .emptyTrash: return "emptytrash"
         case .youtubeDownloader: return "youtubedownloader"
+        case .dropboxAccount: return "dropboxaccount"
+        case .dropboxLink: return "dropboxlink"
         case .fileOperationProgress: return "fileop"
         case .appUninstaller: return "appuninstaller"
         }
@@ -1270,6 +1295,9 @@ public final class CommanderViewModel: ObservableObject {
     }
 
     public func refreshVolumes() {
+        for panel in [leftPanel, rightPanel] {
+            if let loc = panel.dropboxLocation { DropboxPanelCache.shared.invalidate(loc) }
+        }
         mountedVolumes = VolumeScanner.mountedVolumes()
         quickShortcuts = VolumeScanner.quickShortcuts()
         leftPanel.reload()
@@ -1404,7 +1432,32 @@ public final class CommanderViewModel: ObservableObject {
         }
     }
 
+    /// Set by the app: copy / move when either panel is in Dropbox (download, upload or a
+    /// server-side copy) with the progress dialog.
+    public var dropboxTransferHandler: ((_ items: [FileItem], _ from: PanelController, _ to: PanelController, _ isMove: Bool) -> Void)?
+
+    /// Real files / folders of the panel (Dropbox virtual rows like "Loading…" left out).
+    private var transferableItems: [FileItem] {
+        activePanel.actionableItems.filter { !$0.fullPath.hasPrefix("dbx-action:") && $0.fullPath != DropboxLocation.sharedWithMe.fullPath }
+    }
+
+    private func routeDropboxTransfer(isMove: Bool) -> Bool {
+        guard activePanel.dropboxLocation != nil || inactivePanel.dropboxLocation != nil else { return false }
+        let items = transferableItems
+        guard !items.isEmpty else {
+            statusBannerMessage = "Nothing to copy here."
+            return true
+        }
+        if activePanel.dropboxLocation == nil && items.contains(where: { $0.archiveContainerPath != nil }) {
+            statusBannerMessage = "Unpack archive entries first, then upload them."
+            return true
+        }
+        dropboxTransferHandler?(items, activePanel, inactivePanel, isMove)
+        return true
+    }
+
     public func triggerF5Copy(inSameDirectory: Bool = false) {
+        if !inSameDirectory, routeDropboxTransfer(isMove: false) { return }
         let items = activePanel.actionableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No items to copy in this folder!"
@@ -1421,6 +1474,7 @@ public final class CommanderViewModel: ObservableObject {
             activePanel.inlineRenameText = target.name
             return
         }
+        if routeDropboxTransfer(isMove: true) { return }
         let items = activePanel.actionableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No items to move in this folder!"
@@ -1439,6 +1493,20 @@ public final class CommanderViewModel: ObservableObject {
         activePanel.inlineRenameItemID = nil
         guard !newName.isEmpty && newName != item.name else { return }
 
+        if let from = DropboxLocation(fullPath: item.fullPath), let folder = activePanel.dropboxLocation {
+            let panel = activePanel
+            Task { @MainActor in
+                do {
+                    try await DropboxClient.shared.move(from, to: folder.appending(newName))
+                    panel.refreshDropbox()
+                    panel.reload(selectingItemNamed: newName)
+                } catch {
+                    self.statusBannerMessage = error.localizedDescription
+                }
+            }
+            return
+        }
+
         let dir = (item.fullPath as NSString).deletingLastPathComponent
         let newFullPath = (dir as NSString).appendingPathComponent(newName)
         do {
@@ -1456,7 +1524,7 @@ public final class CommanderViewModel: ObservableObject {
 
     /// F8 / Delete: asks for confirmation first (Total Commander style), see `performDelete`.
     public func triggerF8Delete(permanent: Bool = false, secureWipe: Bool = false) {
-        let items = activePanel.actionableItems
+        let items = activePanel.dropboxLocation == nil ? activePanel.actionableItems : transferableItems
         guard !items.isEmpty else {
             statusBannerMessage = "No item selected to delete!"
             return
@@ -1467,6 +1535,22 @@ public final class CommanderViewModel: ObservableObject {
     /// Deletes the confirmed items (trash, permanent, or secure wipe; archive entries in archive mode).
     public func performDelete(items: [FileItem], permanent: Bool = false, secureWipe: Bool = false) {
         guard !items.isEmpty else { return }
+
+        if activePanel.dropboxLocation != nil {
+            let panel = activePanel
+            let targets = items.compactMap { DropboxLocation(fullPath: $0.fullPath) }
+            statusBannerMessage = "Deleting \(targets.count) item(s) in Dropbox…"
+            Task { @MainActor in
+                var failed: String?
+                for t in targets {
+                    do { try await DropboxClient.shared.delete(t) } catch { failed = error.localizedDescription }
+                }
+                panel.clearSelection()
+                panel.refreshDropbox()
+                self.statusBannerMessage = failed ?? "Deleted \(targets.count) item(s) in Dropbox (restorable on dropbox.com for 30 days)"
+            }
+            return
+        }
 
         if case .archive(let archivePath, _) = activePanel.activeTab.vfsMode {
             let internalPaths = items.compactMap { $0.archiveInternalPath }

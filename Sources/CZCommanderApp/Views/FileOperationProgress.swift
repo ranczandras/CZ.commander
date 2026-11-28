@@ -16,6 +16,12 @@ final class FileOperationManager: ObservableObject {
         case move(sources: [String], destination: String, options: FileOperationOptions)
         case unpack(archives: [String], destination: String, alwaysFolder: Bool)
         case extract(archive: String, entries: [String], destination: String)
+        /// Dropbox -> Mac. `deleteAfter`: F6 (moves Dropbox items to Dropbox's deleted files).
+        case dropboxDownload(items: [DropboxEntry], destination: String, deleteAfter: Bool, openAfter: Bool)
+        /// Mac -> Dropbox. `trashAfter`: F6 (local originals go to the Trash).
+        case dropboxUpload(paths: [String], destination: DropboxLocation, options: FileOperationOptions, trashAfter: Bool)
+        /// Inside Dropbox, done by the server.
+        case dropboxServer(items: [DropboxEntry], destination: DropboxLocation, isMove: Bool)
     }
 
     struct Job: Identifiable {
@@ -64,6 +70,10 @@ final class FileOperationManager: ObservableObject {
     func extract(from archive: String, entries: [String], to destination: String) {
         enqueue(Job(kind: .extract(archive: archive, entries: entries, destination: destination),
                     title: "Unpack \(entries.count) item(s) to " + Self.short(destination)), background: false)
+    }
+
+    func dropbox(_ kind: Kind, title: String, background: Bool = false) {
+        enqueue(Job(kind: kind, title: title), background: background)
     }
 
     private func enqueue(_ job: Job, background: Bool) {
@@ -149,6 +159,21 @@ final class FileOperationManager: ObservableObject {
                 case .extract(let archive, let entries, let destination):
                     try ArchiveEngine.unpackArchive(archivePath: archive, toDirectory: destination, specificEntries: entries,
                                                     control: control, progress: report)
+                case .dropboxDownload(let items, let destination, let deleteAfter, let openAfter):
+                    let paths = try await DropboxTransfer.download(items, to: destination, control: control, progress: report)
+                    if deleteAfter {
+                        for item in items { try await DropboxClient.shared.delete(item.location) }
+                    }
+                    if openAfter, let first = paths.first {
+                        await MainActor.run { _ = NSWorkspace.shared.open(URL(fileURLWithPath: first)) }
+                    }
+                case .dropboxUpload(let paths, let destination, let options, let trashAfter):
+                    try await DropboxTransfer.upload(paths, to: destination, options: options, control: control, progress: report)
+                    if trashAfter {
+                        for p in paths { try? FileManager.default.trashItem(at: URL(fileURLWithPath: p), resultingItemURL: nil) }
+                    }
+                case .dropboxServer(let items, let destination, let isMove):
+                    try await DropboxTransfer.copyWithinDropbox(items, to: destination, isMove: isMove, control: control, progress: report)
                 }
             } catch is TransferCancelledError {
                 result = .cancelled
@@ -164,6 +189,7 @@ final class FileOperationManager: ObservableObject {
         guard current?.id == job.id else { return }
         let vm = viewModel ?? CommanderViewModel.shared
         vm.activePanel.activeTab.selectedItemIDs.removeAll()
+        DropboxPanelCache.shared.invalidateAll()
         vm.leftPanel.reload()
         vm.rightPanel.reload()
         current = nil
@@ -286,6 +312,9 @@ struct FileOperationProgressView: View {
         switch manager.current?.kind {
         case .move: return "arrow.right.doc.on.clipboard"
         case .unpack, .extract: return "shippingbox.and.arrow.backward.fill"
+        case .dropboxDownload: return "icloud.and.arrow.down"
+        case .dropboxUpload: return "icloud.and.arrow.up"
+        case .dropboxServer: return "icloud"
         default: return "doc.on.doc.fill"
         }
     }

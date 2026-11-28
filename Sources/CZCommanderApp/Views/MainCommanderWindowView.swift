@@ -459,6 +459,10 @@ public struct MainCommanderWindowView: View {
             YouTubeDownloaderLauncher(viewModel: viewModel)
         case .fileOperationProgress:
             FileOperationProgressView(viewModel: viewModel)
+        case .dropboxAccount:
+            DropboxAccountSheetView(viewModel: viewModel)
+        case .dropboxLink(let side):
+            DropboxLinkSheetView(viewModel: viewModel, side: side)
         case .appUninstaller:
             AppUninstallerLauncher(viewModel: viewModel)
         case .deleteConfirm(let items, let permanent, let secureWipe):

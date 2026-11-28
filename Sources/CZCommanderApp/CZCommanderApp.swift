@@ -208,6 +208,11 @@ public struct CZCommanderMainApp: App {
             }
             .keyboardShortcut("y", modifiers: [.command, .option])
 
+            Button("Dropbox Account...") {
+                MainWindowController.show()
+                viewModel.activeSheet = .dropboxAccount
+            }
+
             Button("Uninstall App...") {
                 AppUninstallerWindowController.show(viewModel: viewModel)
             }
