@@ -125,8 +125,10 @@ final class CZCommanderCoreTests: XCTestCase {
         XCTAssertTrue(subEntries.contains(where: { $0.name == "nested.txt" }))
 
         let unpackDir = (tempRoot as NSString).appendingPathComponent("unpacked")
-        try ArchiveEngine.unpackArchive(archivePath: zipPath, toDirectory: unpackDir)
-        let extractedNested = (unpackDir as NSString).appendingPathComponent("subfolder/nested.txt")
+        // hello.txt sits at the top level, so everything goes into "bundle/".
+        let out = try ArchiveEngine.unpackArchive(archivePath: zipPath, toDirectory: unpackDir)
+        XCTAssertEqual(out, (unpackDir as NSString).appendingPathComponent("bundle"))
+        let extractedNested = (unpackDir as NSString).appendingPathComponent("bundle/subfolder/nested.txt")
         XCTAssertEqual(try String(contentsOfFile: extractedNested, encoding: .utf8), "Nested Archive Content")
     }
 
@@ -503,5 +505,90 @@ extension CZCommanderCoreTests {
         XCTAssertEqual(FileItem.formatByteCount(3 * 1_073_741_824), "3.00 GB")
         XCTAssertEqual(FileItem.formatByteCount(2 * 1_099_511_627_776 + 1_099_511_627_776 / 4), "2.25 TB")
         XCTAssertEqual(FileItem.formatByteCount(1536, format: .bytes), "1.5 KB", "one style everywhere")
+    }
+}
+
+final class ConfigurationPersistenceTests: XCTestCase {
+    func testRoundTripKeepsTabsLocksHiddenAndSide() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("czc-cfg-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let cfg = CommanderSavedConfiguration(
+            showHiddenFiles: true,
+            leftTabs: [SavedTabDescriptor(path: "/tmp"), SavedTabDescriptor(customTitle: "Apps", path: "/Applications/Utilities",
+                                                                             lockedBasePath: "/Applications", lockState: .locked)],
+            leftActiveTabIndex: 1,
+            rightTabs: [SavedTabDescriptor(path: "/usr")],
+            activeSide: "right")
+        try PersistenceManager.saveConfiguration(cfg, toPath: path)
+        let loaded = try XCTUnwrap(PersistenceManager.loadConfiguration(fromPath: path))
+        XCTAssertTrue(loaded.showHiddenFiles)
+        XCTAssertEqual(loaded.leftTabs.count, 2)
+        XCTAssertEqual(loaded.leftTabs[1].lockState, .locked)
+        XCTAssertEqual(loaded.leftTabs[1].lockedBasePath, "/Applications")
+        XCTAssertEqual(loaded.leftActiveTabIndex, 1)
+        XCTAssertEqual(loaded.activeSide, "right")
+    }
+
+    func testHiddenFilesDefaultOffAndOldFilesStillLoad() throws {
+        XCTAssertFalse(CommanderSavedConfiguration().showHiddenFiles)
+        // A file written before "activeSide" existed.
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(CommanderSavedConfiguration())) as! [String: Any]
+        json.removeValue(forKey: "activeSide")
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("czc-old-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: path))
+        XCTAssertNotNil(PersistenceManager.loadConfiguration(fromPath: path))
+    }
+}
+
+final class UnpackFolderRuleTests: XCTestCase {
+    func testWrapperRule() {
+        XCTAssertFalse(ArchiveEngine.needsWrapperFolder(entryNames: ["Project/", "Project/a.txt", "Project/sub/b.txt"]))
+        XCTAssertFalse(ArchiveEngine.needsWrapperFolder(entryNames: ["A/x.txt", "B/y.txt"]))       // folders only (implicit dirs)
+        XCTAssertFalse(ArchiveEngine.needsWrapperFolder(entryNames: ["Project/a.txt", "__MACOSX/._a.txt", ".DS_Store"]))
+        XCTAssertTrue(ArchiveEngine.needsWrapperFolder(entryNames: ["a.txt", "b.jpg"]))
+        XCTAssertTrue(ArchiveEngine.needsWrapperFolder(entryNames: ["Project/", "Project/a.txt", "readme.txt"]))
+        XCTAssertTrue(ArchiveEngine.needsWrapperFolder(entryNames: ["./", "./a.txt"]))
+        XCTAssertFalse(ArchiveEngine.needsWrapperFolder(entryNames: []))
+        XCTAssertEqual(ArchiveEngine.archiveStem("/x/photos.zip"), "photos")
+        XCTAssertEqual(ArchiveEngine.archiveStem("/x/backup.tar.gz"), "backup")
+        XCTAssertEqual(ArchiveEngine.archiveStem("/x/Song.Name.v2.zip"), "Song.Name.v2")
+    }
+
+    func testUnpackPutsLooseFilesIntoFolderAndKeepsFolderOnlyArchives() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-unpack-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        let src = root + "/src"
+        try fm.createDirectory(atPath: src + "/Folder", withIntermediateDirectories: true)
+        fm.createFile(atPath: src + "/Folder/in.txt", contents: Data("1".utf8))
+        fm.createFile(atPath: src + "/loose.txt", contents: Data("2".utf8))
+
+        func zip(_ name: String, _ items: [String]) throws -> String {
+            let out = root + "/" + name
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+            p.currentDirectoryURL = URL(fileURLWithPath: src)
+            p.arguments = ["-qr", out] + items
+            try p.run(); p.waitUntilExit()
+            return out
+        }
+        let mixed = try zip("mixed.zip", ["Folder", "loose.txt"])
+        let foldersOnly = try zip("onlyfolder.zip", ["Folder"])
+
+        let dest1 = root + "/d1"
+        try fm.createDirectory(atPath: dest1, withIntermediateDirectories: true)
+        let out1 = try ArchiveEngine.unpackArchive(archivePath: mixed, toDirectory: dest1)
+        XCTAssertEqual(out1, dest1 + "/mixed")
+        XCTAssertTrue(fm.fileExists(atPath: dest1 + "/mixed/loose.txt"))
+        XCTAssertTrue(fm.fileExists(atPath: dest1 + "/mixed/Folder/in.txt"))
+        XCTAssertFalse(fm.fileExists(atPath: dest1 + "/loose.txt"))
+
+        let dest2 = root + "/d2"
+        try fm.createDirectory(atPath: dest2, withIntermediateDirectories: true)
+        let out2 = try ArchiveEngine.unpackArchive(archivePath: foldersOnly, toDirectory: dest2)
+        XCTAssertEqual(out2, dest2)
+        XCTAssertTrue(fm.fileExists(atPath: dest2 + "/Folder/in.txt"))
+        XCTAssertFalse(fm.fileExists(atPath: dest2 + "/onlyfolder"))
     }
 }

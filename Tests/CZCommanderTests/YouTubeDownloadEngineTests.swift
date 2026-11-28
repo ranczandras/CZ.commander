@@ -133,3 +133,18 @@ final class YouTubeLoginTests: XCTestCase {
         XCTAssertFalse(YouTubeOutputParser.needsLogin("[youtube] x: Video unavailable"))
     }
 }
+
+final class QuickLookMediaTests: XCTestCase {
+    func testMediaDetection() {
+        func item(_ name: String, dir: Bool = false) -> FileItem {
+            FileItem(name: name, fullPath: "/tmp/" + name, isDirectory: dir)
+        }
+        XCTAssertTrue(PanelController.isQuickLookMedia(item("a.JPG")))
+        XCTAssertTrue(PanelController.isQuickLookMedia(item("clip.mov")))
+        XCTAssertTrue(PanelController.isQuickLookMedia(item("clip.mp4")))
+        XCTAssertTrue(PanelController.isQuickLookMedia(item("song.mp3")))
+        XCTAssertFalse(PanelController.isQuickLookMedia(item("notes.txt")))
+        XCTAssertFalse(PanelController.isQuickLookMedia(item("photos.png", dir: true)))
+        XCTAssertFalse(PanelController.isQuickLookMedia(item("noext")))
+    }
+}

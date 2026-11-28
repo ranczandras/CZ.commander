@@ -158,6 +158,9 @@ public struct MainCommanderWindowView: View {
             .buttonStyle(.plain)
             .help("Target = Source")
 
+            // Copy / move / unpack running in the background
+            FileOperationIndicator()
+
             // Cleanup & Empty Trash
             quickToolButton(title: "Cleanup", symbol: "sparkles", help: "Find and delete junk: Trash, caches, logs, leftovers") {
                 viewModel.activeSheet = .cleanup
@@ -457,6 +460,8 @@ public struct MainCommanderWindowView: View {
             EmptyTrashSheetView(viewModel: viewModel)
         case .youtubeDownloader:
             YouTubeDownloaderLauncher(viewModel: viewModel)
+        case .fileOperationProgress:
+            FileOperationProgressView(viewModel: viewModel)
         case .appUninstaller:
             AppUninstallerLauncher(viewModel: viewModel)
         case .startup:

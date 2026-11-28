@@ -48,19 +48,23 @@ public struct FilePanelView: View {
         // The active panel is shown by its stronger header colour only (no frame), like Total Commander.
         .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.5))
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            // Collect every dropped file, then copy them as one job with the progress dialog.
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var paths: [String] = []
             for provider in providers {
+                group.enter()
                 _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    guard let fileURL = url else { return }
-                    DispatchQueue.main.async {
-                        _ = try? FileSystemEngine.copyOrMoveItems(
-                            sources: [fileURL.path],
-                            toDestinationDirectory: self.panel.currentPath,
-                            isMove: false
-                        )
-                        self.viewModel.leftPanel.reload()
-                        self.viewModel.rightPanel.reload()
-                    }
+                    if let url { lock.lock(); paths.append(url.path); lock.unlock() }
+                    group.leave()
                 }
+            }
+            let destination = self.panel.currentPath
+            group.notify(queue: .main) {
+                // Dropped back where they came from: nothing to copy.
+                let incoming = paths.filter { ($0 as NSString).deletingLastPathComponent != destination }
+                guard !incoming.isEmpty else { return }
+                FileOperationManager.shared.copy(incoming, to: destination)
             }
             return true
         }
@@ -776,10 +780,10 @@ public struct FilePanelView: View {
         HStack(spacing: 6) {
             Image(systemName: "line.3.horizontal.decrease.circle.fill")
                 .foregroundColor(palette.cursorBorder.swiftUIColor)
-            Text("Quick Filter:")
+            Text("Search:")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(palette.regularFileText.swiftUIColor)
-            TextField("Filter e.g. *.swift or substring...", text: Binding(
+            TextField("Type to filter: any part of the name, or *.swift", text: Binding(
                 get: { panel.activeTab.quickFilter },
                 set: { newVal in
                     panel.activeTab.quickFilter = newVal
