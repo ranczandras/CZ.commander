@@ -549,6 +549,17 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "findFiles": vm.activeSheet = .findFiles(initialPath: path)
             case "settings": vm.activeSheet = .settings
             case "youtube": YouTubeDownloaderWindowController.show(viewModel: vm)
+            case "fileop":
+                // Copy a small folder from the snapshot dir, paused at once, to show the dialog.
+                let src = (dir as NSString).appendingPathComponent("fileop-src")
+                try? FileManager.default.createDirectory(atPath: src + "/Footage", withIntermediateDirectories: true)
+                for n in 1...3 {
+                    FileManager.default.createFile(atPath: src + "/Footage/clip\(n).mov", contents: Data(count: 300_000 * n))
+                }
+                let m = FileOperationManager.shared
+                m.copy([src + "/Footage"], to: (dir as NSString).appendingPathComponent("fileop-dst"))
+                m.togglePause()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
             case "uninstaller":
                 AppUninstallerWindowController.show(viewModel: vm)
                 // CZ_UNINSTALL_APP=/Applications/X.app preselects an app (read-only preview).
@@ -557,7 +568,7 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "copy": vm.activeSheet = .copyDialog(sources: Array(vm.activePanel.displayedItems.suffix(2)), destinationDir: vm.inactivePanel.currentPath, isMove: false)
             default: break
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + (dialogs[i] == "uninstaller" ? 6.0 : 1.0)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + (dialogs[i] == "uninstaller" ? 6.0 : (dialogs[i] == "fileop" ? 2.0 : 1.0))) {
                 let shotWindow = AuxWindow.window(dialogs[i] == "youtube" ? "youtube" : dialogs[i]) ?? window
                 if let view = shotWindow.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                     view.cacheDisplay(in: view.bounds, to: rep)

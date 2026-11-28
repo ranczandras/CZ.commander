@@ -32,6 +32,14 @@ enum MainWindowController {
             .onAppear {
                 CommanderKeyboardRouter.shared.viewModel = viewModel
                 viewModel.mediaPreviewHandler = { panel in QuickLookController.shared.previewMedia(in: panel) }
+                FileOperationManager.shared.viewModel = viewModel
+                viewModel.transferHandler = { sources, destination, isMove, options in
+                    if isMove {
+                        FileOperationManager.shared.move(sources, to: destination, options: options, background: true)
+                    } else {
+                        FileOperationManager.shared.copy(sources, to: destination, options: options, background: true)
+                    }
+                }
                 // Snapshot / benchmark runs must not overwrite the user's settings.
                 let env = ProcessInfo.processInfo.environment
                 if env["CZ_SNAPSHOT_DIR"] == nil || env["CZ_CONFIG_PATH"] != nil {

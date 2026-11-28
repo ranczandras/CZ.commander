@@ -59,6 +59,26 @@ public struct FileOperationProgress: Sendable {
     public var processedBytes: Int64
     public var totalBytes: Int64
     public var bytesPerSecond: Double
+    /// Full paths of the item being copied right now.
+    public var currentSourcePath: String = ""
+    public var currentDestinationPath: String = ""
+    /// Bytes of the current file done / in total.
+    public var currentFileBytes: Int64 = 0
+    public var currentFileTotal: Int64 = 0
+    /// Running time without pauses.
+    public var elapsedSeconds: TimeInterval = 0
+    /// Still counting files and bytes before the copy starts.
+    public var isScanning: Bool = false
+
+    public var currentFileFraction: Double {
+        currentFileTotal > 0 ? min(1, Double(currentFileBytes) / Double(currentFileTotal)) : 0
+    }
+
+    /// Estimated seconds left at the current speed (nil while unknown).
+    public var remainingSeconds: TimeInterval? {
+        guard bytesPerSecond > 1, totalBytes > processedBytes else { return nil }
+        return Double(totalBytes - processedBytes) / bytesPerSecond
+    }
 
     public init(
         currentFileName: String = "",
@@ -369,144 +389,19 @@ public enum FileSystemEngine {
 
     // MARK: - Copy and Move Operations (F5 / F6 / Shift+F5 / Shift+F6)
 
+    /// Copy (F5) / move (F6). Runs `TransferEngine`: byte-level progress, pause / cancel via
+    /// `control`, folders merge into existing ones, same-volume moves are renames.
     @discardableResult
     public static func copyOrMoveItems(
         sources: [String],
         toDestinationDirectory destDir: String,
         isMove: Bool,
         options: FileOperationOptions = FileOperationOptions(),
+        control: TransferControl? = nil,
         progressHandler: ((FileOperationProgress) -> Void)? = nil
     ) throws -> [String] {
-        let fm = FileManager.default
-        var createdDestinations: [String] = []
-
-        if !fm.fileExists(atPath: destDir) {
-            try fm.createDirectory(atPath: destDir, withIntermediateDirectories: true)
-        }
-
-        let totalBytes = sources.reduce(Int64(0)) { acc, path in
-            var st = stat()
-            guard lstat(path, &st) == 0 else { return acc }
-            if (st.st_mode & S_IFMT) == S_IFDIR {
-                return acc + calculateDirectorySize(at: path)
-            }
-            return acc + Int64(st.st_size)
-        }
-
-        var processedBytes: Int64 = 0
-        let startTime = Date()
-
-        for (index, srcPath) in sources.enumerated() {
-            let srcName = (srcPath as NSString).lastPathComponent
-            let targetName = transformFileName(srcName, withMask: options.targetMask)
-            var destPath = (destDir as NSString).appendingPathComponent(targetName)
-
-            let elapsed = max(0.001, Date().timeIntervalSince(startTime))
-            let speed = Double(processedBytes) / elapsed
-            progressHandler?(
-                FileOperationProgress(
-                    currentFileName: srcName,
-                    processedFiles: index,
-                    totalFiles: sources.count,
-                    processedBytes: processedBytes,
-                    totalBytes: totalBytes,
-                    bytesPerSecond: speed
-                )
-            )
-
-            // Same path check: if copying in same directory with same name, auto-rename if needed
-            if (srcPath as NSString).standardizingPath == (destPath as NSString).standardizingPath {
-                if isMove {
-                    createdDestinations.append(destPath)
-                    continue
-                } else {
-                    destPath = uniqueFilePath(for: destPath)
-                }
-            } else if fm.fileExists(atPath: destPath) {
-                switch options.overwritePolicy {
-                case .skipAll:
-                    continue
-                case .overwriteOlder:
-                    let srcMod = (try? fm.attributesOfItem(atPath: srcPath)[.modificationDate] as? Date) ?? .distantFuture
-                    let dstMod = (try? fm.attributesOfItem(atPath: destPath)[.modificationDate] as? Date) ?? .distantPast
-                    if srcMod <= dstMod {
-                        continue
-                    }
-                    try removeExistingUnlockingIfNeeded(atPath: destPath)
-                case .autoRenameSource:
-                    destPath = uniqueFilePath(for: destPath)
-                case .autoRenameTarget:
-                    let renamedExisting = uniqueFilePath(for: destPath)
-                    try fm.moveItem(atPath: destPath, toPath: renamedExisting)
-                case .overwriteAll, .ask:
-                    try removeExistingUnlockingIfNeeded(atPath: destPath)
-                }
-            }
-
-            var st = stat()
-            let itemBytes: Int64
-            if lstat(srcPath, &st) == 0 {
-                itemBytes = ((st.st_mode & S_IFMT) == S_IFDIR)
-                    ? calculateDirectorySize(at: srcPath)
-                    : Int64(st.st_size)
-            } else {
-                itemBytes = 0
-            }
-
-            if isMove {
-                do {
-                    try fm.moveItem(atPath: srcPath, toPath: destPath)
-                } catch {
-                    try fm.copyItem(atPath: srcPath, toPath: destPath)
-                    try removeExistingUnlockingIfNeeded(atPath: srcPath)
-                }
-            } else {
-                try fm.copyItem(atPath: srcPath, toPath: destPath)
-                if options.preserveTimestamps,
-                   let attrs = try? fm.attributesOfItem(atPath: srcPath) {
-                    var preserved: [FileAttributeKey: Any] = [:]
-                    if let mod = attrs[.modificationDate] { preserved[.modificationDate] = mod }
-                    if let cre = attrs[.creationDate] { preserved[.creationDate] = cre }
-                    if options.preservePermissions, let perm = attrs[.posixPermissions] {
-                        preserved[.posixPermissions] = perm
-                    }
-                    if !preserved.isEmpty {
-                        try? fm.setAttributes(preserved, ofItemAtPath: destPath)
-                    }
-                }
-                if options.verifyAfterCopy {
-                    var checkSt = stat()
-                    if lstat(destPath, &checkSt) == 0, (checkSt.st_mode & S_IFMT) == S_IFREG {
-                        let srcCRC = try ChecksumEngine.crc32(ofFileAt: srcPath)
-                        let dstCRC = try ChecksumEngine.crc32(ofFileAt: destPath)
-                        if srcCRC != dstCRC {
-                            throw NSError(
-                                domain: "CZCommander.Verify",
-                                code: 500,
-                                userInfo: [NSLocalizedDescriptionKey: "CRC32 verification failed for \(targetName)"]
-                            )
-                        }
-                    }
-                }
-            }
-
-            processedBytes += itemBytes
-            createdDestinations.append(destPath)
-        }
-
-        let elapsed = max(0.001, Date().timeIntervalSince(startTime))
-        progressHandler?(
-            FileOperationProgress(
-                currentFileName: "",
-                processedFiles: sources.count,
-                totalFiles: sources.count,
-                processedBytes: totalBytes,
-                totalBytes: totalBytes,
-                bytesPerSecond: Double(totalBytes) / elapsed
-            )
-        )
-
-        return createdDestinations
+        try TransferEngine.copyOrMove(sources: sources, to: destDir, isMove: isMove, options: options,
+                                      control: control, progress: progressHandler)
     }
 
     public static func uniqueFilePath(for path: String) -> String {

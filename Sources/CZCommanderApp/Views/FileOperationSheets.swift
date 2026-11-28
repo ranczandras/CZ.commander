@@ -111,11 +111,8 @@ public struct CopyMoveSheetView: View {
             // Check if source is inside an archive (extract out of archive!)
             if case .archive(let archivePath, _) = viewModel.activePanel.activeTab.vfsMode {
                 let internalPaths = sources.compactMap { $0.archiveInternalPath }
-                try ArchiveEngine.unpackArchive(
-                    archivePath: archivePath,
-                    toDirectory: destinationDir,
-                    specificEntries: internalPaths
-                )
+                FileOperationManager.shared.extract(from: archivePath, entries: internalPaths, to: destinationDir)
+                return
             } else if case .archive(let targetArchivePath, _) = viewModel.inactivePanel.activeTab.vfsMode {
                 // Target panel is inside an archive -> Pack into existing archive!
                 try ArchiveEngine.addFilesToArchive(
@@ -130,12 +127,13 @@ public struct CopyMoveSheetView: View {
                     preservePermissions: preservePermissions,
                     verifyAfterCopy: verifyAfterCopy
                 )
-                _ = try FileSystemEngine.copyOrMoveItems(
-                    sources: sources.map { $0.fullPath },
-                    toDestinationDirectory: destinationDir,
-                    isMove: isMove,
-                    options: opts
-                )
+                // Runs in the background with the Total Commander style progress dialog.
+                if isMove {
+                    FileOperationManager.shared.move(sources.map { $0.fullPath }, to: destinationDir, options: opts)
+                } else {
+                    FileOperationManager.shared.copy(sources.map { $0.fullPath }, to: destinationDir, options: opts)
+                }
+                return
             }
             viewModel.activePanel.activeTab.selectedItemIDs.removeAll()
             viewModel.leftPanel.reload()
@@ -359,20 +357,8 @@ public struct UnpackFilesSheetView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Unpack (OK)") {
-                    do {
-                        for arch in archives {
-                            try ArchiveEngine.unpackArchive(
-                                archivePath: arch.fullPath,
-                                toDirectory: destinationDir,
-                                unpackEachToSeparateSubdir: unpackEachToSubdir
-                            )
-                        }
-                        viewModel.leftPanel.reload()
-                        viewModel.rightPanel.reload()
-                        dismiss()
-                    } catch {
-                        errorMessage = error.localizedDescription
-                    }
+                    FileOperationManager.shared.unpack(archives.map(\.fullPath), to: destinationDir,
+                                                       alwaysFolder: unpackEachToSubdir)
                 }
                 .keyboardShortcut(.defaultAction)
             }

@@ -113,6 +113,7 @@ Settings and tabs are stored in `~/Library/Application Support/CZ.commander/conf
 - **Archives**: create and extract `.zip` / `.tar` variants, browse archives inside the panel.
 - **Split & Combine** with `.crc` files, **checksums** (CRC32 `.sfv`, MD5, SHA-1, SHA-256, SHA-512), **encode / decode** (Base64, UUEncode, XXEncode).
 - **Attributes**: POSIX permissions, macOS locked / hidden flags, Finder tags, timestamps.
+- **Copy / move / unpack progress** (Total Commander style): current file from / to, a bar for the file and one for the whole job, percent, speed, elapsed and remaining time, Pause / Resume, Cancel and Background (a toolbar indicator brings the dialog back). Jobs run on a background thread one after the other; copies clone on APFS when possible, folders merge into existing ones, same-volume moves are renames.
 - **Quick search**: just start typing in a panel (Total Commander "Letters - with search dialog"): the list keeps only the names that contain the typed text anywhere, the cursor jumps to the first match; Backspace edits, Esc closes, arrows / Enter work on the filtered list, `*` and `?` work as wildcards.
 - **F3 on images, video and audio** opens macOS Quick Look (several selected files page with the arrow keys; Esc, Space or F3 closes). Other files open in the built-in Lister.
 - **Drag files out** of a panel into any app, a media player or the Desktop: the selected files (or the one under the mouse) are dragged as a copy, never moved.

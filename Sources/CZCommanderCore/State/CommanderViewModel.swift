@@ -1093,6 +1093,7 @@ public enum ActiveCommanderSheet: Identifiable {
     case cleanup
     case emptyTrash
     case youtubeDownloader
+    case fileOperationProgress
     case appUninstaller
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
     case renameTab(side: PanelSide, index: Int)
@@ -1130,6 +1131,7 @@ public enum ActiveCommanderSheet: Identifiable {
         case .cleanup: return "cleanup"
         case .emptyTrash: return "emptytrash"
         case .youtubeDownloader: return "youtubedownloader"
+        case .fileOperationProgress: return "fileop"
         case .appUninstaller: return "appuninstaller"
         }
     }
@@ -1640,12 +1642,19 @@ public final class CommanderViewModel: ObservableObject {
 
     // MARK: - Background Transfer Queue
 
+    /// Set by the app: runs copy / move jobs with the progress dialog in the background.
+    public var transferHandler: ((_ sources: [String], _ destination: String, _ isMove: Bool, _ options: FileOperationOptions) -> Void)?
+
     public func enqueueTransferJob(
         sources: [String],
         destination: String,
         isMove: Bool,
         options: FileOperationOptions
     ) {
+        if let transferHandler {
+            transferHandler(sources, destination, isMove, options)
+            return
+        }
         let opLabel = isMove ? "Move" : "Copy"
         let job = TransferJob(
             title: "\(opLabel) (\(sources.count)) -> \((destination as NSString).lastPathComponent)",

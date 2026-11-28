@@ -352,7 +352,9 @@ public enum ArchiveEngine {
         archivePath: String,
         toDirectory destinationDirectory: String,
         specificEntries: [String]? = nil,
-        unpackEachToSeparateSubdir: Bool = false
+        unpackEachToSeparateSubdir: Bool = false,
+        control: TransferControl? = nil,
+        progress: ((FileOperationProgress) -> Void)? = nil
     ) throws -> String {
         let fm = FileManager.default
         let wholeArchive = specificEntries?.isEmpty ?? true
@@ -374,8 +376,119 @@ public enum ArchiveEngine {
         if let entries = specificEntries, !entries.isEmpty {
             args.append(contentsOf: entries)
         }
-        _ = try runCommand(executable: "/usr/bin/tar", arguments: args)
+        if control == nil && progress == nil {
+            _ = try runCommand(executable: "/usr/bin/tar", arguments: args)
+        } else {
+            try runTarWithProgress(archivePath: archivePath, arguments: args, specificEntries: specificEntries,
+                                   destination: finalDestDir, control: control, progress: progress)
+        }
         return finalDestDir
+    }
+
+    /// Runs `tar -x` with `-v`: every "x <path>" line marks an entry as done; sizes come from
+    /// the archive listing. Pause stops the tar process (SIGSTOP), cancel terminates it.
+    static func runTarWithProgress(archivePath: String, arguments: [String], specificEntries: [String]?,
+                                   destination: String, control: TransferControl?,
+                                   progress: ((FileOperationProgress) -> Void)?) throws {
+        let reporter = TransferReporter(handler: progress)
+        var sizes: [String: Int64] = [:]
+        let listing = (try? readAllArchiveEntries(archivePath: archivePath)) ?? []
+        let wanted = specificEntries.map(Set.init)
+        for entry in listing where !entry.isDirectory {
+            let key = normalizedEntryPath(entry.internalPath)
+            if let wanted, !wanted.contains(where: { key == normalizedEntryPath($0) || key.hasPrefix(normalizedEntryPath($0) + "/") }) {
+                continue
+            }
+            sizes[key] = entry.size
+        }
+        reporter.progress.totalFiles = sizes.count
+        reporter.progress.totalBytes = sizes.values.reduce(0, +)
+        reporter.progress.currentSourcePath = archivePath
+        reporter.emit(force: true)
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        var args = arguments
+        if let i = args.firstIndex(of: "-xf") { args[i] = "-xvf" }
+        p.arguments = args
+        let errPipe = Pipe()
+        p.standardError = errPipe
+        p.standardOutput = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+
+        let lock = NSLock()
+        var buffer = Data()
+        var errorLines: [String] = []
+        func handle(_ line: String) {
+            guard line.hasPrefix("x ") else {
+                if !line.isEmpty { errorLines.append(line) }
+                return
+            }
+            let path = normalizedEntryPath(String(line.dropFirst(2)))
+            reporter.progress.currentFileName = (path as NSString).lastPathComponent
+            reporter.progress.currentDestinationPath = (destination as NSString).appendingPathComponent(path)
+            if let size = sizes[path] {
+                reporter.progress.processedBytes += size
+                reporter.progress.processedFiles += 1
+            }
+            reporter.emit()
+        }
+        errPipe.fileHandleForReading.readabilityHandler = { h in
+            let data = h.availableData
+            lock.lock(); defer { lock.unlock() }
+            if data.isEmpty { h.readabilityHandler = nil; return }
+            buffer.append(data)
+            while let nl = buffer.firstIndex(of: 0x0A) {
+                let line = String(decoding: buffer[buffer.startIndex..<nl], as: UTF8.self)
+                buffer.removeSubrange(buffer.startIndex...nl)
+                handle(line)
+            }
+        }
+        try p.run()
+
+        var stopped = false
+        while p.isRunning {
+            if let control {
+                if control.isCancelled {
+                    if stopped { kill(p.processIdentifier, SIGCONT) }
+                    p.terminate()
+                    p.waitUntilExit()
+                    errPipe.fileHandleForReading.readabilityHandler = nil
+                    throw TransferCancelledError()
+                }
+                if control.isPaused && !stopped {
+                    kill(p.processIdentifier, SIGSTOP); stopped = true
+                    lock.lock(); reporter.notePaused(true); reporter.emit(force: true); lock.unlock()
+                } else if !control.isPaused && stopped {
+                    kill(p.processIdentifier, SIGCONT); stopped = false
+                    lock.lock(); reporter.notePaused(false); lock.unlock()
+                }
+            }
+            usleep(50_000)
+        }
+        p.waitUntilExit()
+        errPipe.fileHandleForReading.readabilityHandler = nil
+        if let rest = try? errPipe.fileHandleForReading.readToEnd(), !rest.isEmpty {
+            lock.lock(); buffer.append(rest); lock.unlock()
+        }
+        lock.lock()
+        if !buffer.isEmpty { handle(String(decoding: buffer, as: UTF8.self)); buffer.removeAll() }
+        reporter.progress.processedBytes = max(reporter.progress.processedBytes, reporter.progress.totalBytes)
+        reporter.progress.processedFiles = reporter.progress.totalFiles
+        reporter.emit(force: true)
+        let errors = errorLines
+        lock.unlock()
+        if p.terminationStatus != 0 {
+            throw NSError(domain: "CZCommander.Archive", code: Int(p.terminationStatus),
+                          userInfo: [NSLocalizedDescriptionKey: errors.last ?? "Unpacking failed (tar \(p.terminationStatus))."])
+        }
+    }
+
+    static func normalizedEntryPath(_ path: String) -> String {
+        var p = path
+        while p.hasPrefix("./") { p.removeFirst(2) }
+        while p.hasSuffix("/") { p.removeLast() }
+        return p
     }
 
     /// Entry paths as stored in the archive (folders end with "/").
