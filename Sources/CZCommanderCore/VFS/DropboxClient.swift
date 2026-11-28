@@ -575,53 +575,14 @@ public final class DropboxClient: @unchecked Sendable {
         return out
     }
 
-    /// Every shared folder you are a member of, added to your Dropbox or not.
+    /// "Shared with me": the shared links you added (newest last). Dropbox's own membership
+    /// list is not used: folders you could not add to your Dropbox show up there empty.
     private func listSharedWithMe() async throws -> [DropboxEntry] {
-        var out: [DropboxEntry] = []
-        var seen = Set<String>()
-        var json = try await rpc("sharing/list_folders", ["limit": 1000])
-        var mountable = try? await rpc("sharing/list_mountable_folders", ["limit": 1000])
-        while true {
-            for page in [json, mountable ?? [:]] {
-                for case let e as [String: Any] in (page["entries"] as? [Any]) ?? [] {
-                    guard let id = e["shared_folder_id"] as? String, let name = e["name"] as? String else { continue }
-                    guard seen.insert(id).inserted else { continue }
-                    let date = (e["time_invited"] as? String).flatMap { DropboxEntry.dateParser.date(from: $0) }
-                    // Added to your Dropbox: open it by its path (writable). Not added: Dropbox only
-                    // serves it through the folder's own shared link (read / download).
-                    let location: DropboxLocation
-                    if let path = (e["path_display"] as? String) ?? (e["path_lower"] as? String), !path.isEmpty {
-                        location = .own(path)
-                    } else if let preview = e["preview_url"] as? String, !preview.isEmpty {
-                        location = .link(url: preview, path: "")
-                    } else {
-                        location = .namespace(id: id, path: "")
-                    }
-                    if case .link(let url, _) = location { DropboxLocation.rememberLinkTitle(name, for: url) }
-                    out.append(DropboxEntry(name: name, isFolder: true, size: 0, modified: date, location: location))
-                }
-            }
-            var more = false
-            if let c = json["cursor"] as? String {
-                json = try await rpc("sharing/list_folders/continue", ["cursor": c]); more = true
-            } else { json = [:] }
-            if let c = mountable?["cursor"] as? String {
-                mountable = try? await rpc("sharing/list_mountable_folders/continue", ["cursor": c]); more = true
-            } else { mountable = nil }
-            if !more { break }
-        }
-        // Links opened earlier (invitations that could not be added to this Dropbox).
-        let listedLinks = Set(out.compactMap { e -> String? in
-            if case .link(let url, _) = e.location { return url }
-            return nil
-        })
-        let listedNames = Set(out.map { $0.name.lowercased() })
-        for link in DropboxSavedLinks.all where !listedLinks.contains(link.url) && !listedNames.contains(link.title.lowercased()) {
+        DropboxSavedLinks.all.map { link in
             DropboxLocation.rememberLinkTitle(link.title, for: link.url)
-            out.append(DropboxEntry(name: "🔗 " + link.title, isFolder: true, size: 0, modified: nil,
-                                    location: .link(url: link.url, path: "")))
+            return DropboxEntry(name: "🔗 " + link.title, isFolder: true, size: 0, modified: nil,
+                                location: .link(url: link.url, path: ""))
         }
-        return out.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     /// Resolves a pasted shared link to its folder (or file) name.

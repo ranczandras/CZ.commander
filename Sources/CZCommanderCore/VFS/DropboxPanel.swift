@@ -116,7 +116,9 @@ extension PanelController {
             var shared = FileItem(name: "⇄ Shared with me", fullPath: DropboxLocation.sharedWithMe.fullPath, isDirectory: true)
             shared.modificationDate = Date.distantPast
             items.append(shared)
-            var link = FileItem(name: "🔗 Open shared link…", fullPath: DropboxPanelCache.openLinkPath, isDirectory: true)
+        }
+        if location == .own("/") || location == .sharedWithMe {
+            var link = FileItem(name: "＋ Add shared link…", fullPath: DropboxPanelCache.openLinkPath, isDirectory: true)
             link.modificationDate = Date.distantPast
             items.append(link)
         }

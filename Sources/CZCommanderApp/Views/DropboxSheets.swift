@@ -81,7 +81,7 @@ struct DropboxAccountSheetView: View {
                         Text(email).font(.system(size: 11)).foregroundColor(.secondary)
                     }
                 }
-                Text("Open Dropbox in the active panel. Copy with F5 / F6 between Dropbox and a local panel; \"⇄ Shared with me\" lists every folder shared with you, \"🔗 Open shared link…\" opens a dropbox.com link.")
+                Text("Open Dropbox in the active panel. Copy with F5 / F6 between Dropbox and a local panel. \"⇄ Shared with me\" keeps the shared links you added with \"＋ Add shared link…\".")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -161,9 +161,9 @@ struct DropboxLinkSheetView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "link").font(.system(size: 16, weight: .bold))
-                Text("Open Dropbox shared link").font(.headline)
+                Text("Add Dropbox shared link").font(.headline)
             }
-            Text("Paste a dropbox.com link to a shared folder or file. It opens in the panel; copy from it with F5. Folders are remembered under \"⇄ Shared with me\" (F8 there removes them from the list only).")
+            Text("Paste a dropbox.com link to a shared folder (or a file). Folders are kept under \"⇄ Shared with me\" and open right away; copy from them with F5. F8 on a link there only takes it off the list.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
             TextField("https://www.dropbox.com/scl/fo/…", text: $link)
@@ -176,7 +176,7 @@ struct DropboxLinkSheetView: View {
                 Spacer()
                 Button("Cancel") { CommanderDialog.close(viewModel) }
                     .keyboardShortcut(.cancelAction)
-                Button(busy ? "Opening…" : "Open") { open() }
+                Button(busy ? "Checking…" : "Add & Open") { open() }
                     .buttonStyle(SquareProminentButtonStyle())
                     .keyboardShortcut(.defaultAction)
                     .disabled(busy || link.trimmingCharacters(in: .whitespaces).isEmpty)
