@@ -507,29 +507,43 @@ struct FileOperationProgressView: View {
 }
 
 /// Small toolbar indicator while a job runs in the background; click to show the dialog.
+/// Drawn in the theme's toolbar colours like the other toolbar buttons.
 struct FileOperationIndicator: View {
+    let palette: CommanderThemePalette
     @ObservedObject private var manager = FileOperationManager.shared
 
     var body: some View {
         if let job = manager.current {
+            let fraction = manager.progress.fractionCompleted
             Button {
                 manager.showDialog()
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: manager.isPaused ? "pause.fill" : "arrow.triangle.2.circlepath")
-                        .font(.system(size: 10, weight: .bold))
-                    Text(String(format: "%.0f%%", manager.progress.fractionCompleted * 100))
+                HStack(spacing: 5) {
+                    Image(systemName: manager.isPaused ? "pause.fill" : "doc.on.doc")
+                        .font(.system(size: 10.5, weight: .bold))
+                    Text(String(format: "%.0f%%", fraction * 100))
                         .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    SquareProgressBar(fraction: manager.progress.fractionCompleted)
-                        .frame(width: 50)
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(palette.dividerColor.swiftUIColor.opacity(0.35))
+                        GeometryReader { geo in
+                            Rectangle()
+                                .fill(palette.activeHeaderBackground.swiftUIColor)
+                                .frame(width: geo.size.width * min(1, max(0, fraction)))
+                        }
+                    }
+                    .frame(width: 54, height: 7)
+                    .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.8))
                 }
+                .fixedSize()
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .overlay(Rectangle().stroke(Color.accentColor, lineWidth: 1))
+                .background(Rectangle().fill(palette.toolbarBackground.swiftUIColor))
+                .overlay(Rectangle().stroke(palette.dividerColor.swiftUIColor, lineWidth: 0.8))
+                .foregroundColor(palette.regularFileText.swiftUIColor)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(job.title + (manager.queued.isEmpty ? "" : " (+\(manager.queued.count) queued)"))
+            .help(job.title + (manager.queued.isEmpty ? "" : " (+\(manager.queued.count) queued)") + " – click to show")
         }
     }
 }

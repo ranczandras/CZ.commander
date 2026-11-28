@@ -568,6 +568,15 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 let m = FileOperationManager.shared
                 m.copy([src + "/Footage"], to: dst)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
+            case "fileopbg":
+                // A paused copy running in the background, to show the toolbar indicator.
+                let src = (dir as NSString).appendingPathComponent("fileopbg-src")
+                try? FileManager.default.createDirectory(atPath: src, withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: src + "/clip.mov", contents: Data(count: 2_000_000))
+                let m = FileOperationManager.shared
+                m.copy([src + "/clip.mov"], to: (dir as NSString).appendingPathComponent("fileopbg-dst"), background: true)
+                m.togglePause()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
             case "uninstaller":
                 AppUninstallerWindowController.show(viewModel: vm)
                 // CZ_UNINSTALL_APP=/Applications/X.app preselects an app (read-only preview).

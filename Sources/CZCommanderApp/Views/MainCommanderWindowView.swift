@@ -159,7 +159,7 @@ public struct MainCommanderWindowView: View {
             .help("Target = Source")
 
             // Copy / move / unpack running in the background
-            FileOperationIndicator()
+            FileOperationIndicator(palette: palette)
 
             // Cleanup & Empty Trash
             quickToolButton(title: "Cleanup", symbol: "sparkles", help: "Find and delete junk: Trash, caches, logs, leftovers") {
