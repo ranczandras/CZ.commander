@@ -1142,6 +1142,7 @@ public enum ActiveCommanderSheet: Identifiable {
     case dropboxLink(side: PanelSide)
     case fileOperationProgress
     case appUninstaller
+    case startup
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
     case renameTab(side: PanelSide, index: Int)
 
@@ -1182,6 +1183,7 @@ public enum ActiveCommanderSheet: Identifiable {
         case .dropboxLink: return "dropboxlink"
         case .fileOperationProgress: return "fileop"
         case .appUninstaller: return "appuninstaller"
+        case .startup: return "startup"
         }
     }
 }
@@ -1405,6 +1407,8 @@ public final class CommanderViewModel: ObservableObject {
             activeSheet = .youtubeDownloader
         case "cm_Uninstall", "cm_AppUninstaller":
             activeSheet = .appUninstaller
+        case "cm_Startup", "cm_StartupItems":
+            activeSheet = .startup
         default:
             break
         }

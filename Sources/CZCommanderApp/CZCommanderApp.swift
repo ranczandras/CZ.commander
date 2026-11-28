@@ -217,6 +217,11 @@ public struct CZCommanderMainApp: App {
                 AppUninstallerWindowController.show(viewModel: viewModel)
             }
             .keyboardShortcut("u", modifiers: [.command, .option])
+
+            Button("Startup Items...") {
+                StartupWindowController.show(viewModel: viewModel)
+            }
+            .keyboardShortcut("l", modifiers: [.command, .option])
             Divider()
             Button("Source <-> Target (Cmd+U)") {
                 viewModel.swapPanels()
@@ -554,6 +559,7 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
             case "findFiles": vm.activeSheet = .findFiles(initialPath: path)
             case "settings": vm.activeSheet = .settings
             case "youtube": YouTubeDownloaderWindowController.show(viewModel: vm)
+            case "startup": StartupWindowController.show(viewModel: vm)
             case "fileop":
                 // Copy a small folder from the snapshot dir, paused at once, to show the dialog.
                 let src = (dir as NSString).appendingPathComponent("fileop-src")

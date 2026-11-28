@@ -174,6 +174,9 @@ public struct MainCommanderWindowView: View {
             quickToolButton(title: "Uninstall", symbol: "xmark.bin", help: "Uninstall an app and everything it left behind (Cmd+Opt+U)") {
                 AppUninstallerWindowController.show(viewModel: viewModel)
             }
+            quickToolButton(title: "Startup", symbol: "power", help: "Choose what starts at login: login items and launch agents (Cmd+Opt+L)") {
+                StartupWindowController.show(viewModel: viewModel)
+            }
 
             // Theme Quick Menu
             Menu {
@@ -465,6 +468,8 @@ public struct MainCommanderWindowView: View {
             DropboxLinkSheetView(viewModel: viewModel, side: side)
         case .appUninstaller:
             AppUninstallerLauncher(viewModel: viewModel)
+        case .startup:
+            StartupLauncher(viewModel: viewModel)
         case .deleteConfirm(let items, let permanent, let secureWipe):
             DeleteConfirmSheetView(viewModel: viewModel, items: items, permanent: permanent, secureWipe: secureWipe)
         case .renameTab(let side, let index):
