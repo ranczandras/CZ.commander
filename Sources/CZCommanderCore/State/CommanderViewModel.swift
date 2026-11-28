@@ -285,7 +285,7 @@ public final class PanelController: ObservableObject {
     @Published public var thumbnailSize: Double = 96.0
     private var sizeCalculationTasks: [String: Task<Void, Never>] = [:]
 
-    public var showHiddenFiles: Bool = true {
+    public var showHiddenFiles: Bool = false {
         didSet { reload() }
     }
 
@@ -1151,7 +1151,7 @@ public final class CommanderViewModel: ObservableObject {
     @Published public var showButtonBar: Bool = true
     @Published public var showDriveBar: Bool = true
     @Published public var showFunctionKeyBar: Bool = true
-    @Published public var showHiddenFiles: Bool = true {
+    @Published public var showHiddenFiles: Bool = false {
         didSet {
             leftPanel.showHiddenFiles = showHiddenFiles
             rightPanel.showHiddenFiles = showHiddenFiles
@@ -1696,7 +1696,46 @@ public final class CommanderViewModel: ObservableObject {
 
     // MARK: - Configuration Persistence
 
+    /// Saves now and shows "Configuration & tabs saved" (menu command).
     public func saveCurrentConfiguration() {
+        let cfg = makeConfiguration()
+        try? PersistenceManager.saveConfiguration(cfg)
+        lastSavedConfiguration = try? JSONEncoder().encode(cfg)
+        statusBannerMessage = "Configuration & tabs saved"
+    }
+
+    private var lastSavedConfiguration: Data?
+    private var autosaveTimer: Timer?
+
+    /// Saves hidden-file mode, tabs, folders, locks, sorting and the rest whenever something
+    /// changed (checked every few seconds) and when `autosaveNow()` is called (quit, app
+    /// switch). Started by the app, never by tests.
+    public func startAutosave() {
+        guard autosaveTimer == nil else { return }
+        if lastSavedConfiguration == nil, PersistenceManager.loadConfiguration() != nil {
+            lastSavedConfiguration = try? JSONEncoder().encode(makeConfiguration())
+        }
+        let timer = Timer(timeInterval: 3, repeats: true) { _ in
+            MainActor.assumeIsolated { CommanderViewModel.shared.autosaveNow() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        autosaveTimer = timer
+    }
+
+    /// Writes the configuration if it differs from the last one written.
+    public func autosaveNow() {
+        guard autosaveTimer != nil else { return }
+        let cfg = makeConfiguration()
+        guard let data = try? JSONEncoder().encode(cfg), data != lastSavedConfiguration else { return }
+        do {
+            try PersistenceManager.saveConfiguration(cfg)
+            lastSavedConfiguration = data
+        } catch {
+            // Keep the old signature so the next tick tries again.
+        }
+    }
+
+    func makeConfiguration() -> CommanderSavedConfiguration {
         let leftSaved = leftPanel.tabs.map {
             SavedTabDescriptor(
                 customTitle: $0.customTitle,
@@ -1719,7 +1758,7 @@ public final class CommanderViewModel: ObservableObject {
                 sortAscending: $0.sortAscending
             )
         }
-        let cfg = CommanderSavedConfiguration(
+        return CommanderSavedConfiguration(
             themeID: themeID,
             sizeDisplayFormat: sizeDisplayFormat,
             fontSize: fontSize,
@@ -1737,10 +1776,9 @@ public final class CommanderViewModel: ObservableObject {
             remoteProfiles: remoteProfiles,
             buttonBarItems: buttonBarItems,
             multiRenamePresets: multiRenamePresets,
-            commandHistory: []
+            commandHistory: [],
+            activeSide: activeSide == .left ? "left" : "right"
         )
-        try? PersistenceManager.saveConfiguration(cfg)
-        statusBannerMessage = "Configuration & tabs saved"
     }
 
     private static func restoreTab(_ saved: SavedTabDescriptor, fallbackPath: String) -> FolderTab {
@@ -1789,6 +1827,9 @@ public final class CommanderViewModel: ObservableObject {
             rightPanel.tabs = cfg.rightTabs.map { Self.restoreTab($0, fallbackPath: rightPanel.currentPath) }
             rightPanel.activeTabIndex = min(max(0, cfg.rightActiveTabIndex), rightPanel.tabs.count - 1)
             rightPanel.reload()
+        }
+        if let side = cfg.activeSide {
+            activeSide = side == "right" ? .right : .left
         }
     }
 }

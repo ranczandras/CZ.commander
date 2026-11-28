@@ -85,13 +85,15 @@ public struct CommanderSavedConfiguration: Codable, Sendable {
     public var buttonBarItems: [ButtonBarItem]
     public var multiRenamePresets: [MultiRenamePreset]
     public var commandHistory: [String]
+    /// "left" / "right": the panel that had the keyboard (optional, older files lack it).
+    public var activeSide: String?
 
     public init(
         themeID: CommanderThemeID = .windowsDefault,
         sizeDisplayFormat: FileSizeDisplayFormat = .dynamicKMG,
         fontSize: Double = 12.5,
         isHorizontalSplit: Bool = false,
-        showHiddenFiles: Bool = true,
+        showHiddenFiles: Bool = false,
         showButtonBar: Bool = true,
         showDriveBar: Bool = true,
         showCommandLine: Bool = true,
@@ -104,7 +106,8 @@ public struct CommanderSavedConfiguration: Codable, Sendable {
         remoteProfiles: [RemoteConnectionProfile] = [],
         buttonBarItems: [ButtonBarItem] = [],
         multiRenamePresets: [MultiRenamePreset] = MultiRenamePreset.builtInPresets,
-        commandHistory: [String] = []
+        commandHistory: [String] = [],
+        activeSide: String? = nil
     ) {
         self.themeID = themeID
         self.sizeDisplayFormat = sizeDisplayFormat
@@ -124,12 +127,17 @@ public struct CommanderSavedConfiguration: Codable, Sendable {
         self.buttonBarItems = buttonBarItems
         self.multiRenamePresets = multiRenamePresets
         self.commandHistory = commandHistory
+        self.activeSide = activeSide
     }
 }
 
 public enum PersistenceManager {
     /// `~/Library/Application Support/CZ.commander/config.json`
     public static var defaultConfigFilePath: String {
+        // Test runs point this at a scratch file (CZ_CONFIG_PATH=/tmp/x.json).
+        if let override = ProcessInfo.processInfo.environment["CZ_CONFIG_PATH"], !override.isEmpty {
+            return override
+        }
         let fm = FileManager.default
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")

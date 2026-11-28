@@ -503,3 +503,36 @@ extension CZCommanderCoreTests {
         XCTAssertEqual(FileItem.formatByteCount(1536, format: .bytes), "1.5 KB", "one style everywhere")
     }
 }
+
+final class ConfigurationPersistenceTests: XCTestCase {
+    func testRoundTripKeepsTabsLocksHiddenAndSide() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("czc-cfg-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let cfg = CommanderSavedConfiguration(
+            showHiddenFiles: true,
+            leftTabs: [SavedTabDescriptor(path: "/tmp"), SavedTabDescriptor(customTitle: "Apps", path: "/Applications/Utilities",
+                                                                             lockedBasePath: "/Applications", lockState: .locked)],
+            leftActiveTabIndex: 1,
+            rightTabs: [SavedTabDescriptor(path: "/usr")],
+            activeSide: "right")
+        try PersistenceManager.saveConfiguration(cfg, toPath: path)
+        let loaded = try XCTUnwrap(PersistenceManager.loadConfiguration(fromPath: path))
+        XCTAssertTrue(loaded.showHiddenFiles)
+        XCTAssertEqual(loaded.leftTabs.count, 2)
+        XCTAssertEqual(loaded.leftTabs[1].lockState, .locked)
+        XCTAssertEqual(loaded.leftTabs[1].lockedBasePath, "/Applications")
+        XCTAssertEqual(loaded.leftActiveTabIndex, 1)
+        XCTAssertEqual(loaded.activeSide, "right")
+    }
+
+    func testHiddenFilesDefaultOffAndOldFilesStillLoad() throws {
+        XCTAssertFalse(CommanderSavedConfiguration().showHiddenFiles)
+        // A file written before "activeSide" existed.
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(CommanderSavedConfiguration())) as! [String: Any]
+        json.removeValue(forKey: "activeSide")
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("czc-old-\(UUID().uuidString).json").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try JSONSerialization.data(withJSONObject: json).write(to: URL(fileURLWithPath: path))
+        XCTAssertNotNil(PersistenceManager.loadConfiguration(fromPath: path))
+    }
+}

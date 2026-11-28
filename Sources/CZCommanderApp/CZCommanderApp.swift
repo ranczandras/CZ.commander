@@ -629,10 +629,12 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillResignActive(_ notification: Notification) {
         MacFunctionKeyModeController.shared.restoreSystemFunctionKeyMode()
+        CommanderViewModel.shared.autosaveNow()
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
         MacFunctionKeyModeController.shared.restoreSystemFunctionKeyMode()
+        CommanderViewModel.shared.autosaveNow()
     }
 }
 

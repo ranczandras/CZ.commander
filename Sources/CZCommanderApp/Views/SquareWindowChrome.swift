@@ -32,6 +32,11 @@ enum MainWindowController {
             .onAppear {
                 CommanderKeyboardRouter.shared.viewModel = viewModel
                 viewModel.mediaPreviewHandler = { panel in QuickLookController.shared.previewMedia(in: panel) }
+                // Snapshot / benchmark runs must not overwrite the user's settings.
+                let env = ProcessInfo.processInfo.environment
+                if env["CZ_SNAPSHOT_DIR"] == nil || env["CZ_CONFIG_PATH"] != nil {
+                    viewModel.startAutosave()
+                }
                 CommanderKeyboardRouter.shared.installMonitorsIfNeeded()
                 CommanderKeyboardRouter.shared.focusKeyCaptureView()
             }
