@@ -36,6 +36,8 @@ public struct CopyMoveSheetView: View {
                 )
                 .font(.headline)
             }
+            // Counted while the dialog is open, like Total Commander.
+            TransferTotalsLine(localPaths: sources.filter { $0.archiveContainerPath == nil }.map(\.fullPath))
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Destination directory:")

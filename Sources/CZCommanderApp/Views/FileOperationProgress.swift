@@ -44,6 +44,9 @@ final class FileOperationManager: ObservableObject {
     @Published private(set) var outcome: Outcome = .running
     @Published private(set) var isPaused = false
     @Published private(set) var queued: [Job] = []
+    /// Transfers waiting for OK in the confirmation dialog (first one shown).
+    @Published var pendingTransfers: [PendingTransfer] = []
+    var pendingTransfer: PendingTransfer? { pendingTransfers.first }
     /// A target that exists; the job waits until `answer(_:)` is called.
     @Published private(set) var pendingConflict: TransferConflict? = nil
     /// Hand-over between the UI (writes) and the waiting transfer thread (reads).

@@ -241,3 +241,26 @@ final class MoveAtEndTests: XCTestCase {
         XCTAssertTrue(fm.fileExists(atPath: root + "/src/b.txt"))
     }
 }
+
+final class SizeCounterTests: XCTestCase {
+    func testCountsFilesFoldersAndBytes() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-count-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        try fm.createDirectory(atPath: root + "/A/B", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/A/one", contents: Data(count: 100))
+        fm.createFile(atPath: root + "/A/B/two", contents: Data(count: 250))
+        fm.createFile(atPath: root + "/single", contents: Data(count: 7))
+        let done = expectation(description: "counted")
+        let counter = SizeCounter()
+        let lock = NSLock()
+        var final = SizeCounter.Totals()
+        counter.start(localPaths: [root + "/A", root + "/single"]) { t in
+            if t.isDone { lock.withLock { final = t }; done.fulfill() }
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(final.files, 3)
+        XCTAssertEqual(final.folders, 2)
+        XCTAssertEqual(final.bytes, 357)
+    }
+}

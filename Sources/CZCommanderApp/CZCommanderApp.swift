@@ -577,6 +577,17 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
                 m.copy([src + "/clip.mov"], to: (dir as NSString).appendingPathComponent("fileopbg-dst"), background: true)
                 m.togglePause()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { m.cancel() }
+            case "pbcheck":
+                // Writes a dragged Dropbox item to a private pasteboard and reads it back (drop test).
+                let entry = DropboxEntry(name: "clip.mov", isFolder: false, size: 5, modified: nil, location: .own("/Test/clip.mov"))
+                let pb = NSPasteboard(name: NSPasteboard.Name("czc-pbcheck-\(UUID().uuidString)"))
+                pb.clearContents()
+                pb.writeObjects([DropboxFilePromiseProvider(entry: entry)])
+                let read = pb.pasteboardItems?.compactMap { $0.string(forType: dropboxItemPasteboardType)
+                    ?? ($0.propertyList(forType: dropboxItemPasteboardType) as? String) } ?? []
+                let types = pb.types?.map(\.rawValue).joined(separator: ",") ?? ""
+                try? ("read=\(read) types=\(types)\n").write(toFile: (dir as NSString).appendingPathComponent("pbcheck.txt"), atomically: true, encoding: .utf8)
+                pb.releaseGlobally()
             case "uninstaller":
                 AppUninstallerWindowController.show(viewModel: vm)
                 // CZ_UNINSTALL_APP=/Applications/X.app preselects an app (read-only preview).

@@ -86,6 +86,9 @@ public struct NativeFileTableView: NSViewRepresentable {
         tableView.dragItemsProvider = { [weak coord] row in
             coord?.dragPayloads(forRow: row) ?? []
         }
+        // Drops land on the list itself (AppKit): local files and Dropbox items from the other panel.
+        tableView.registerForDraggedTypes([.fileURL, dropboxItemPasteboardType])
+        tableView.setDraggingSourceOperationMask([.copy, .link], forLocal: false)
         tableView.onRightClickSelect = { [weak coord] row in
             coord?.toggleSelection(ofRow: row)
         }
@@ -112,6 +115,45 @@ public struct NativeFileTableView: NSViewRepresentable {
 
     @MainActor
     public final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
+        // MARK: Drop (from the other panel, Finder, other apps)
+
+        public func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
+                       proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+            // Never onto the list the drag started from.
+            if let source = info.draggingSource as? NSTableView, source === tableView { return [] }
+            let pb = info.draggingPasteboard
+            let hasDropbox = pb.availableType(from: [dropboxItemPasteboardType]) != nil
+            let hasFiles = pb.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])
+            guard hasDropbox || hasFiles else { return [] }
+            tableView.setDropRow(-1, dropOperation: .on)  // the whole list is the target
+            return .copy
+        }
+
+        public func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int,
+                       dropOperation: NSTableView.DropOperation) -> Bool {
+            let pb = info.draggingPasteboard
+            var dropboxPaths: [String] = []
+            for item in pb.pasteboardItems ?? [] {
+                if let s = item.string(forType: dropboxItemPasteboardType) {
+                    dropboxPaths.append(s)
+                } else if let plist = item.propertyList(forType: dropboxItemPasteboardType) as? String {
+                    dropboxPaths.append(plist)
+                }
+            }
+            var localPaths: [String] = []
+            if dropboxPaths.isEmpty,
+               let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] {
+                localPaths = urls.map(\.path)
+            }
+            guard !dropboxPaths.isEmpty || !localPaths.isEmpty else { return false }
+            let target = panel
+            let vm = viewModel
+            DispatchQueue.main.async {
+                DropboxIntegration.handleDrop(dropboxPaths: dropboxPaths, localPaths: localPaths, onto: target, viewModel: vm)
+            }
+            return true
+        }
+
         /// What to drag from `row`: the whole selection when the row is selected, otherwise just
         /// that row. Local files go as file URLs, Dropbox items as file promises; "..", archive
         /// entries and Dropbox's virtual rows are not draggable.

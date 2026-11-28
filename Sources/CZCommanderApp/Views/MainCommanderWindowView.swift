@@ -459,6 +459,8 @@ public struct MainCommanderWindowView: View {
             YouTubeDownloaderLauncher(viewModel: viewModel)
         case .fileOperationProgress:
             FileOperationProgressLauncher(viewModel: viewModel)
+        case .transferConfirm:
+            TransferConfirmSheetView(viewModel: viewModel)
         case .dropboxAccount:
             DropboxAccountSheetView(viewModel: viewModel)
         case .dropboxLink(let side):
@@ -526,6 +528,11 @@ struct DeleteConfirmSheetView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Rectangle().fill(Color.primary.opacity(0.05)))
             .overlay(Rectangle().stroke(Color.primary.opacity(0.15), lineWidth: 1))
+
+            // Counted while the question is open (Dropbox items by listing their folders).
+            TransferTotalsLine(
+                localPaths: items.filter { !DropboxLocation.isDropboxPath($0.fullPath) && $0.archiveContainerPath == nil }.map(\.fullPath),
+                dropbox: items.compactMap { DropboxLocation.isDropboxPath($0.fullPath) ? DropboxIntegration.entry(for: $0) : nil })
 
             HStack {
                 Spacer()

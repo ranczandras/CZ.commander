@@ -761,7 +761,8 @@ public final class PanelController: ObservableObject {
             }
             syncSelectionToTab()
 
-            if calculateDirSizeOnSpace && item.isDirectory && item.archiveContainerPath == nil {
+            if calculateDirSizeOnSpace && item.isDirectory && item.archiveContainerPath == nil
+                && !item.fullPath.hasPrefix("dbx-action:") {
                 startAsyncDirectorySizeCalculation(for: item)
             }
         }
@@ -782,6 +783,43 @@ public final class PanelController: ObservableObject {
         }
         if let rawIdx = rawItems.firstIndex(where: { $0.id == itemID }) {
             rawItems[rawIdx].isCalculatingSize = true
+        }
+
+        // Dropbox folder: walk it with listings, updating the size as pages arrive.
+        if let location = DropboxLocation(fullPath: folderPath), location != .sharedWithMe {
+            let task = Task.detached(priority: .userInitiated) { [weak self] in
+                var total: Int64 = 0
+                var queue = [location]
+                while !queue.isEmpty {
+                    if Task.isCancelled { return }
+                    let current = queue.removeFirst()
+                    for e in (try? await DropboxClient.shared.list(current)) ?? [] {
+                        if e.isFolder { queue.append(e.location) } else { total += e.size }
+                    }
+                    let partial = total
+                    await MainActor.run { [weak self] in
+                        guard let self, let i = self.displayedItems.firstIndex(where: { $0.id == itemID }) else { return }
+                        self.displayedItems[i].calculatedDirectorySize = partial
+                    }
+                }
+                let finalBytes = total
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.sizeCalculationTasks.removeValue(forKey: folderPath)
+                    self.activeTab.calculatedDirSizes[folderPath] = finalBytes
+                    if let r = self.rawItems.firstIndex(where: { $0.id == itemID }) {
+                        self.rawItems[r].isCalculatingSize = false
+                        self.rawItems[r].calculatedDirectorySize = finalBytes
+                    }
+                    if let d = self.displayedItems.firstIndex(where: { $0.id == itemID }) {
+                        self.displayedItems[d].isCalculatingSize = false
+                        self.displayedItems[d].calculatedDirectorySize = finalBytes
+                    }
+                    if self.activeTab.sortColumn == .size { self.applySortAndFilter() }
+                }
+            }
+            sizeCalculationTasks[folderPath] = task
+            return
         }
 
         let task = Task.detached(priority: .userInitiated) { [weak self] in
@@ -1141,6 +1179,7 @@ public enum ActiveCommanderSheet: Identifiable {
     case dropboxAccount
     case dropboxLink(side: PanelSide)
     case fileOperationProgress
+    case transferConfirm
     case appUninstaller
     case deleteConfirm(items: [FileItem], permanent: Bool, secureWipe: Bool)
     case renameTab(side: PanelSide, index: Int)
@@ -1181,6 +1220,7 @@ public enum ActiveCommanderSheet: Identifiable {
         case .dropboxAccount: return "dropboxaccount"
         case .dropboxLink: return "dropboxlink"
         case .fileOperationProgress: return "fileop"
+        case .transferConfirm: return "transferconfirm"
         case .appUninstaller: return "appuninstaller"
         }
     }

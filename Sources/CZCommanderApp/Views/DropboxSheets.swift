@@ -23,13 +23,19 @@ enum DropboxIntegration {
         }
         viewModel.dropboxTransferHandler = { items, from, to, isMove in
             let entries = items.compactMap { entry(for: $0) }
+            let m = FileOperationManager.shared
             switch (from.dropboxLocation, to.dropboxLocation) {
-            case (.some, .none):
+            case (.some(let src), .none):
                 // Dropbox -> Mac
                 guard !entries.isEmpty else { return }
-                FileOperationManager.shared.dropbox(
-                    .dropboxDownload(items: entries, destination: to.currentPath, deleteAfter: isMove, openAfter: false),
-                    title: (isMove ? "Move " : "Download ") + FileOperationManager.countText(entries.map(\.name)) + " to " + FileOperationManager.short(to.currentPath))
+                let dest = to.currentPath
+                m.confirm(PendingTransfer(
+                    title: (isMove ? "Move " : "Download ") + "\(entries.count) item(s) from Dropbox",
+                    icon: "icloud.and.arrow.down", from: src.displayPath, to: dest,
+                    localPaths: [], dropbox: entries, names: entries.map(\.name)) {
+                    m.dropbox(.dropboxDownload(items: entries, destination: dest, deleteAfter: isMove, openAfter: false),
+                              title: (isMove ? "Move " : "Download ") + FileOperationManager.countText(entries.map(\.name)) + " to " + FileOperationManager.short(dest))
+                })
             case (.none, .some(let dest)):
                 // Mac -> Dropbox
                 guard dest.supportsWrite else {
@@ -37,17 +43,25 @@ enum DropboxIntegration {
                     return
                 }
                 let paths = items.map(\.fullPath)
-                FileOperationManager.shared.dropbox(
-                    .dropboxUpload(paths: paths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: isMove),
-                    title: (isMove ? "Move " : "Upload ") + FileOperationManager.countText(paths) + " to " + dest.displayPath)
-            case (.some, .some(let dest)):
+                m.confirm(PendingTransfer(
+                    title: (isMove ? "Move " : "Upload ") + "\(paths.count) item(s) to Dropbox",
+                    icon: "icloud.and.arrow.up", from: from.currentPath, to: dest.displayPath,
+                    localPaths: paths, dropbox: [], names: items.map(\.name)) {
+                    m.dropbox(.dropboxUpload(paths: paths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: isMove),
+                              title: (isMove ? "Move " : "Upload ") + FileOperationManager.countText(paths) + " to " + dest.displayPath)
+                })
+            case (.some(let src), .some(let dest)):
                 guard dest.supportsWrite, entries.allSatisfy({ $0.location.supportsWrite }) else {
                     viewModel.statusBannerMessage = "Copy from a shared link into your Dropbox is not supported; download it instead."
                     return
                 }
-                FileOperationManager.shared.dropbox(
-                    .dropboxServer(items: entries, destination: dest, isMove: isMove),
-                    title: (isMove ? "Move " : "Copy ") + FileOperationManager.countText(entries.map(\.name)) + " to " + dest.displayPath)
+                m.confirm(PendingTransfer(
+                    title: (isMove ? "Move " : "Copy ") + "\(entries.count) item(s) inside Dropbox",
+                    icon: "icloud", from: src.displayPath, to: dest.displayPath,
+                    localPaths: [], dropbox: entries, names: entries.map(\.name)) {
+                    m.dropbox(.dropboxServer(items: entries, destination: dest, isMove: isMove),
+                              title: (isMove ? "Move " : "Copy ") + FileOperationManager.countText(entries.map(\.name)) + " to " + dest.displayPath)
+                })
             case (.none, .none):
                 break
             }
@@ -277,17 +291,26 @@ final class DropboxPromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
         let done = DispatchSemaphore(value: 0)
         let box = PromiseResultBox()
         DispatchQueue.main.async {
-            FileOperationManager.shared.dropbox(
-                .dropboxDownload(items: [entry], destination: folder, deleteAfter: false, openAfter: false),
-                title: "Download \"\(entry.name)\" to " + FileOperationManager.short(folder)
-            ) { outcome in
-                switch outcome {
-                case .failed(let message): box.error = DropboxError(message)
-                case .cancelled: box.error = DropboxError("Cancelled.")
-                default: break
+            let m = FileOperationManager.shared
+            m.confirm(PendingTransfer(
+                title: "Download \"\(entry.name)\" from Dropbox", icon: "icloud.and.arrow.down",
+                from: entry.location.parent.displayPath, to: folder, localPaths: [], dropbox: [entry], names: [entry.name],
+                onCancel: {
+                    box.error = DropboxError("Cancelled.")
+                    done.signal()
+                }) {
+                m.dropbox(
+                    .dropboxDownload(items: [entry], destination: folder, deleteAfter: false, openAfter: false),
+                    title: "Download \"\(entry.name)\" to " + FileOperationManager.short(folder)
+                ) { outcome in
+                    switch outcome {
+                    case .failed(let message): box.error = DropboxError(message)
+                    case .cancelled: box.error = DropboxError("Cancelled.")
+                    default: break
+                    }
+                    done.signal()
                 }
-                done.signal()
-            }
+            })
         }
         done.wait()
         completionHandler(box.error)
@@ -315,37 +338,55 @@ extension DropboxIntegration {
             guard let loc = DropboxLocation(fullPath: path) else { return nil }
             return DropboxEntry(name: loc.lastName, isFolder: false, size: 0, modified: nil, location: loc)
         }
+        let m = FileOperationManager.shared
         if let dest = panel.dropboxLocation {
-            let fromHere = entries.filter { $0.location.parent == dest }
             let incoming = entries.filter { $0.location.parent != dest }
-            _ = fromHere  // dropped back where it came from
             if !incoming.isEmpty {
                 guard dest.supportsWrite, incoming.allSatisfy({ $0.location.supportsWrite }) else {
                     viewModel.statusBannerMessage = "Copy from a shared link into Dropbox is not supported; download it instead."
                     return
                 }
-                FileOperationManager.shared.dropbox(.dropboxServer(items: incoming, destination: dest, isMove: false),
-                                                    title: "Copy " + FileOperationManager.countText(incoming.map(\.name)) + " to " + dest.displayPath)
+                m.confirm(PendingTransfer(title: "Copy \(incoming.count) item(s) inside Dropbox", icon: "icloud",
+                                          from: incoming[0].location.parent.displayPath, to: dest.displayPath,
+                                          localPaths: [], dropbox: incoming, names: incoming.map(\.name)) {
+                    m.dropbox(.dropboxServer(items: incoming, destination: dest, isMove: false),
+                              title: "Copy " + FileOperationManager.countText(incoming.map(\.name)) + " to " + dest.displayPath)
+                })
+                return
             }
             if !localPaths.isEmpty {
                 guard dest.supportsWrite else {
                     viewModel.statusBannerMessage = "This Dropbox place is read-only."
                     return
                 }
-                FileOperationManager.shared.dropbox(
-                    .dropboxUpload(paths: localPaths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: false),
-                    title: "Upload " + FileOperationManager.countText(localPaths) + " to " + dest.displayPath)
+                m.confirm(PendingTransfer(title: "Upload \(localPaths.count) item(s) to Dropbox", icon: "icloud.and.arrow.up",
+                                          from: (localPaths[0] as NSString).deletingLastPathComponent, to: dest.displayPath,
+                                          localPaths: localPaths, dropbox: [],
+                                          names: localPaths.map { ($0 as NSString).lastPathComponent }) {
+                    m.dropbox(.dropboxUpload(paths: localPaths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: false),
+                              title: "Upload " + FileOperationManager.countText(localPaths) + " to " + dest.displayPath)
+                })
             }
             return
         }
+        let dest = panel.currentPath
         if !entries.isEmpty {
-            FileOperationManager.shared.dropbox(
-                .dropboxDownload(items: entries, destination: panel.currentPath, deleteAfter: false, openAfter: false),
-                title: "Download " + FileOperationManager.countText(entries.map(\.name)) + " to " + FileOperationManager.short(panel.currentPath))
+            m.confirm(PendingTransfer(title: "Download \(entries.count) item(s) from Dropbox", icon: "icloud.and.arrow.down",
+                                      from: entries[0].location.parent.displayPath, to: dest,
+                                      localPaths: [], dropbox: entries, names: entries.map(\.name)) {
+                m.dropbox(.dropboxDownload(items: entries, destination: dest, deleteAfter: false, openAfter: false),
+                          title: "Download " + FileOperationManager.countText(entries.map(\.name)) + " to " + FileOperationManager.short(dest))
+            })
+            return
         }
-        let incoming = localPaths.filter { ($0 as NSString).deletingLastPathComponent != panel.currentPath }
+        let incoming = localPaths.filter { ($0 as NSString).deletingLastPathComponent != dest }
         if !incoming.isEmpty {
-            FileOperationManager.shared.copy(incoming, to: panel.currentPath)
+            m.confirm(PendingTransfer(title: "Copy \(incoming.count) item(s)", icon: "doc.on.doc.fill",
+                                      from: (incoming[0] as NSString).deletingLastPathComponent, to: dest,
+                                      localPaths: incoming, dropbox: [],
+                                      names: incoming.map { ($0 as NSString).lastPathComponent }) {
+                m.copy(incoming, to: dest)
+            })
         }
     }
 }
