@@ -1539,7 +1539,23 @@ public final class CommanderViewModel: ObservableObject {
 
         if activePanel.dropboxLocation != nil {
             let panel = activePanel
-            let targets = items.compactMap { DropboxLocation(fullPath: $0.fullPath) }
+            var targets = items.compactMap { DropboxLocation(fullPath: $0.fullPath) }
+            // Saved shared links: F8 only takes them off the list, never touches Dropbox.
+            let links = targets.compactMap { t -> String? in
+                if case .link(let url, let p) = t, p.isEmpty { return url }
+                return nil
+            }
+            if !links.isEmpty {
+                links.forEach { DropboxSavedLinks.remove(url: $0) }
+                targets.removeAll { if case .link(_, let p) = $0 { return p.isEmpty }; return false }
+                DropboxPanelCache.shared.invalidate(.sharedWithMe)
+                if targets.isEmpty {
+                    panel.clearSelection()
+                    panel.refreshDropbox()
+                    statusBannerMessage = "Removed \(links.count) link(s) from the list (nothing deleted in Dropbox)"
+                    return
+                }
+            }
             statusBannerMessage = "Deleting \(targets.count) item(s) in Dropbox…"
             Task { @MainActor in
                 var failed: String?

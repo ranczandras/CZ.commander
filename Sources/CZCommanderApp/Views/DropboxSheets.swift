@@ -163,7 +163,7 @@ struct DropboxLinkSheetView: View {
                 Image(systemName: "link").font(.system(size: 16, weight: .bold))
                 Text("Open Dropbox shared link").font(.headline)
             }
-            Text("Paste a dropbox.com link to a shared folder or file. It opens in the panel; copy from it with F5.")
+            Text("Paste a dropbox.com link to a shared folder or file. It opens in the panel; copy from it with F5. Folders are remembered under \"⇄ Shared with me\" (F8 there removes them from the list only).")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
             TextField("https://www.dropbox.com/scl/fo/…", text: $link)
@@ -202,6 +202,8 @@ struct DropboxLinkSheetView: View {
                 CommanderDialog.close(viewModel)
                 let panel = side == .left ? viewModel.leftPanel : viewModel.rightPanel
                 if info.isFolder {
+                    DropboxSavedLinks.add(url: url, title: info.name)
+                    DropboxPanelCache.shared.invalidate(.sharedWithMe)
                     panel.openDropbox(.link(url: url, path: ""))
                 } else {
                     // A single shared file: download it straight into the other panel's folder.

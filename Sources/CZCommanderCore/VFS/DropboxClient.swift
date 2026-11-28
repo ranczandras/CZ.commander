@@ -168,6 +168,42 @@ public enum DropboxLocation: Equatable, Sendable {
     public var supportsWrite: Bool { apiPath != nil }
 }
 
+// MARK: - Saved links
+
+/// Shared links opened in the panel, kept so they show up in "Shared with me". Folders you were
+/// invited to but could not add to your Dropbox (for example not enough space) are only
+/// reachable through their link; the Dropbox API does not list them.
+public enum DropboxSavedLinks {
+    static let key = "DropboxSavedLinks"
+    nonisolated(unsafe) static var defaults: UserDefaults = .standard
+
+    public struct Link: Equatable, Sendable {
+        public let url: String
+        public let title: String
+    }
+
+    public static var all: [Link] {
+        let raw = defaults.array(forKey: key) as? [[String: String]] ?? []
+        return raw.compactMap { d in
+            guard let url = d["url"], !url.isEmpty else { return nil }
+            return Link(url: url, title: d["title"] ?? "Shared link")
+        }
+    }
+
+    public static func add(url: String, title: String) {
+        var list = all.filter { $0.url != url }
+        list.append(Link(url: url, title: title))
+        defaults.set(list.map { ["url": $0.url, "title": $0.title] }, forKey: key)
+        DropboxLocation.rememberLinkTitle(title, for: url)
+    }
+
+    public static func remove(url: String) {
+        defaults.set(all.filter { $0.url != url }.map { ["url": $0.url, "title": $0.title] }, forKey: key)
+    }
+
+    public static func contains(url: String) -> Bool { all.contains { $0.url == url } }
+}
+
 // MARK: - Entries
 
 public struct DropboxEntry: Sendable, Equatable {
@@ -573,6 +609,17 @@ public final class DropboxClient: @unchecked Sendable {
                 mountable = try? await rpc("sharing/list_mountable_folders/continue", ["cursor": c]); more = true
             } else { mountable = nil }
             if !more { break }
+        }
+        // Links opened earlier (invitations that could not be added to this Dropbox).
+        let listedLinks = Set(out.compactMap { e -> String? in
+            if case .link(let url, _) = e.location { return url }
+            return nil
+        })
+        let listedNames = Set(out.map { $0.name.lowercased() })
+        for link in DropboxSavedLinks.all where !listedLinks.contains(link.url) && !listedNames.contains(link.title.lowercased()) {
+            DropboxLocation.rememberLinkTitle(link.title, for: link.url)
+            out.append(DropboxEntry(name: "🔗 " + link.title, isFolder: true, size: 0, modified: nil,
+                                    location: .link(url: link.url, path: "")))
         }
         return out.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }

@@ -84,3 +84,19 @@ final class DropboxCredentialStoreTests: XCTestCase {
         XCTAssertNil(DropboxKeychain.load(account: "refresh_token"))
     }
 }
+
+final class DropboxSavedLinksTests: XCTestCase {
+    func testAddRemove() {
+        let suite = "czc-test-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suite)!
+        DropboxSavedLinks.defaults = d
+        defer { d.removePersistentDomain(forName: suite); DropboxSavedLinks.defaults = .standard }
+        DropboxSavedLinks.add(url: "https://www.dropbox.com/scl/fo/a/h?x=1", title: "Big Footage")
+        DropboxSavedLinks.add(url: "https://www.dropbox.com/scl/fo/b/h", title: "Other")
+        DropboxSavedLinks.add(url: "https://www.dropbox.com/scl/fo/a/h?x=1", title: "Big Footage")
+        XCTAssertEqual(DropboxSavedLinks.all.map(\.title), ["Other", "Big Footage"])
+        XCTAssertEqual(DropboxLocation.link(url: "https://www.dropbox.com/scl/fo/a/h?x=1", path: "").lastName, "Big Footage")
+        DropboxSavedLinks.remove(url: "https://www.dropbox.com/scl/fo/b/h")
+        XCTAssertEqual(DropboxSavedLinks.all.count, 1)
+    }
+}
