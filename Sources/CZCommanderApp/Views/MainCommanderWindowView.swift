@@ -458,7 +458,7 @@ public struct MainCommanderWindowView: View {
         case .youtubeDownloader:
             YouTubeDownloaderLauncher(viewModel: viewModel)
         case .fileOperationProgress:
-            FileOperationProgressView(viewModel: viewModel)
+            FileOperationProgressLauncher(viewModel: viewModel)
         case .dropboxAccount:
             DropboxAccountSheetView(viewModel: viewModel)
         case .dropboxLink(let side):

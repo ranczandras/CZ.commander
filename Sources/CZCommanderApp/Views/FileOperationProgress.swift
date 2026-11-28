@@ -135,18 +135,21 @@ final class FileOperationManager: ObservableObject {
         queued.removeAll { $0.id == id }
     }
 
+    /// The progress dialog is its own movable window that floats above the main window.
     func showDialog() {
-        guard let vm = viewModel ?? Optional(CommanderViewModel.shared) else { return }
-        MainWindowController.show()
-        vm.activeSheet = .fileOperationProgress
-    }
-
-    func hideDialog() {
-        guard let vm = viewModel ?? Optional(CommanderViewModel.shared) else { return }
-        if case .fileOperationProgress = vm.activeSheet {
-            CommanderDialog.close(vm)
+        let vm = viewModel ?? CommanderViewModel.shared
+        AuxWindow.show(id: Self.windowID, title: "File Operation", size: NSSize(width: 640, height: 330),
+                       minSize: NSSize(width: 560, height: 260), floating: true) {
+            FileOperationProgressView(viewModel: vm)
         }
     }
+
+    /// "Background": hides the window, the job keeps running (toolbar indicator brings it back).
+    func hideDialog() {
+        AuxWindow.hide(Self.windowID)
+    }
+
+    static let windowID = "fileop"
 
     /// Closes the dialog after a failed job was looked at.
     func dismissResult() {
@@ -248,9 +251,7 @@ final class FileOperationManager: ObservableObject {
         }
         if let next = queued.first {
             queued.removeFirst()
-            let dialogOpen: Bool
-            if case .fileOperationProgress = vm.activeSheet { dialogOpen = true } else { dialogOpen = false }
-            run(next, showDialog: dialogOpen)
+            run(next, showDialog: AuxWindow.isVisible(Self.windowID))
         } else {
             outcome = .running
             hideDialog()
@@ -346,7 +347,8 @@ struct FileOperationProgressView: View {
             }
         }
         .padding(18)
-        .frame(width: 600)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onExitCommand { manager.hideDialog() }
     }
 
     @State private var lastTitle = ""
@@ -529,5 +531,19 @@ struct FileOperationIndicator: View {
             .buttonStyle(.plain)
             .help(job.title + (manager.queued.isEmpty ? "" : " (+\(manager.queued.count) queued)"))
         }
+    }
+}
+
+/// Opens the separate progress window when `.fileOperationProgress` is requested.
+struct FileOperationProgressLauncher: View {
+    @ObservedObject var viewModel: CommanderViewModel
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .onAppear {
+                viewModel.activeSheet = nil
+                FileOperationManager.shared.showDialog()
+            }
     }
 }

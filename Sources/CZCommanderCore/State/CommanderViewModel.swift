@@ -276,6 +276,9 @@ public final class PanelController: ObservableObject {
     public var cursorIndex: Int = 0 { didSet { if oldValue != cursorIndex { cursorSignal.notify() } } }
     public var cursorItemID: String? = nil { didSet { if oldValue != cursorItemID { cursorSignal.notify() } } }
     public var scrollTargetID: String? = nil { didSet { if oldValue != scrollTargetID { cursorSignal.notify() } } }
+    /// Bumped on every scroll request, so scrolling to the same row again (in and out of the
+    /// same folder) still scrolls.
+    public private(set) var scrollRequestSerial = 0
     public var selectedItemIDs: Set<String> = [] { didSet { if oldValue != selectedItemIDs { cursorSignal.notify() } } }
     /// Per-tab selection kept outside the @Published `tabs` array, so selecting does not
     /// re-render the panel. Keyed by tab id; moves with the tabs on swap.
@@ -336,8 +339,9 @@ public final class PanelController: ObservableObject {
         if cursorItemID != newID {
             cursorItemID = newID
         }
-        if scrollIntoView && scrollTargetID != newID {
-            scrollTargetID = newID
+        if scrollIntoView {
+            scrollRequestSerial += 1
+            if scrollTargetID != newID { scrollTargetID = newID } else { cursorSignal.notify() }
         }
     }
 
@@ -522,16 +526,18 @@ public final class PanelController: ObservableObject {
 
         displayedItems = parentEntries + regularEntries
 
+        // The restored cursor is scrolled into view: coming back from a subfolder lands on it
+        // even far down a long list.
         if let nameToSelect = preferredSelectName,
            let idx = displayedItems.firstIndex(where: { $0.name == nameToSelect }) {
-            setCursor(to: idx)
+            setCursor(to: idx, scrollIntoView: true)
         } else if let prevID = fallbackCursorID ?? cursorItemID,
                   let idx = displayedItems.firstIndex(where: { $0.id == prevID }) {
-            setCursor(to: idx)
+            setCursor(to: idx, scrollIntoView: true)
         } else if let prevIdx = fallbackCursorIndex, prevIdx > 0 {
-            setCursor(to: prevIdx)
+            setCursor(to: prevIdx, scrollIntoView: true)
         } else {
-            setCursor(to: 0)
+            setCursor(to: 0, scrollIntoView: true)
         }
     }
 

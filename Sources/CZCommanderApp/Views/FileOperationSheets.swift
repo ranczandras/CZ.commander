@@ -111,6 +111,7 @@ public struct CopyMoveSheetView: View {
             // Check if source is inside an archive (extract out of archive!)
             if case .archive(let archivePath, _) = viewModel.activePanel.activeTab.vfsMode {
                 let internalPaths = sources.compactMap { $0.archiveInternalPath }
+                dismiss()
                 FileOperationManager.shared.extract(from: archivePath, entries: internalPaths, to: destinationDir)
                 return
             } else if case .archive(let targetArchivePath, _) = viewModel.inactivePanel.activeTab.vfsMode {
@@ -128,6 +129,7 @@ public struct CopyMoveSheetView: View {
                     verifyAfterCopy: verifyAfterCopy
                 )
                 // Runs in the background with the Total Commander style progress dialog.
+                dismiss()
                 if isMove {
                     FileOperationManager.shared.move(sources.map { $0.fullPath }, to: destinationDir, options: opts)
                 } else {
@@ -373,6 +375,7 @@ public struct UnpackFilesSheetView: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button("Unpack (OK)") {
+                    dismiss()
                     FileOperationManager.shared.unpack(archives.map(\.fullPath), to: destinationDir,
                                                        alwaysFolder: unpackEachToSubdir)
                 }

@@ -30,6 +30,17 @@ public final class DropboxPanelCache {
 
     public func entry(forFullPath path: String) -> DropboxEntry? { entriesByPath[path] }
 
+    /// Name to put the cursor on once a listing that is still loading arrives, per panel.
+    private var pendingSelection: [ObjectIdentifier: String] = [:]
+
+    func setPendingSelection(_ name: String?, for panel: PanelController) {
+        pendingSelection[ObjectIdentifier(panel)] = name
+    }
+
+    func takePendingSelection(for panel: PanelController) -> String? {
+        pendingSelection.removeValue(forKey: ObjectIdentifier(panel))
+    }
+
     public func invalidate(_ location: DropboxLocation) { listings[location.token] = nil }
     public func invalidateAll() { listings.removeAll() }
 
@@ -85,6 +96,7 @@ extension PanelController {
             activeTab.historyForwardStack.removeAll()
         }
         activeTab.vfsMode = .dropbox(location: location, origin: origin)
+        DropboxPanelCache.shared.setPendingSelection(name, for: self)
         activeTab.currentPath = location.fullPath
         activeTab.quickFilter = ""
         isQuickFilterVisible = false
@@ -110,7 +122,9 @@ extension PanelController {
         let token = location.token
         let (listed, error) = DropboxPanelCache.shared.items(for: location) { [weak self] in
             guard let self, self.dropboxLocation?.token == token else { return }
-            self.reload()
+            // Select what was asked for when the folder opened (the folder we came back from).
+            let wanted = DropboxPanelCache.shared.takePendingSelection(for: self)
+            self.reload(selectingItemNamed: wanted)
         }
         if location == .own("/") {
             var shared = FileItem(name: "⇄ Shared with me", fullPath: DropboxLocation.sharedWithMe.fullPath, isDirectory: true)

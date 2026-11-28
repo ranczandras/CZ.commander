@@ -146,7 +146,7 @@ public struct NativeFileTableView: NSViewRepresentable {
         private var lastThemeID: CommanderThemeID = .windowsDefault
         private var lastFontSize: Double = 12.5
         private var lastSizeFormat: FileSizeDisplayFormat = .dynamicKMG
-        private var lastScrollTargetID: String? = nil
+        private var lastScrollSerial = -1
         var cursorSubscription: AnyCancellable?
 
         init(viewModel: CommanderViewModel, panel: PanelController) {
@@ -196,11 +196,12 @@ public struct NativeFileTableView: NSViewRepresentable {
 
         private func syncScrollTarget(_ tv: NSTableView) {
             let newCursor = panel.cursorIndex
-            if let scrollID = panel.scrollTargetID, scrollID != lastScrollTargetID {
-                lastScrollTargetID = scrollID
-                if newCursor >= 0 && newCursor < cachedItems.count {
-                    tv.scrollRowToVisible(newCursor)
-                }
+            // Only once the table shows the new list (the row really is the target), so a request
+            // made right after a reload is not used up on the old rows.
+            if let scrollID = panel.scrollTargetID, panel.scrollRequestSerial != lastScrollSerial,
+               newCursor >= 0, newCursor < cachedItems.count, cachedItems[newCursor].id == scrollID {
+                lastScrollSerial = panel.scrollRequestSerial
+                tv.scrollRowToVisible(newCursor)
             }
         }
 
