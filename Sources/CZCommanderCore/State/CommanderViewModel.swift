@@ -442,6 +442,31 @@ public final class PanelController: ObservableObject {
         )
     }
 
+    /// Names containing `text` anywhere; `*` / `?` make it a wildcard mask.
+    nonisolated public static func quickFilter(_ items: [FileItem], with text: String) -> [FileItem] {
+        if text.contains("*") || text.contains("?") {
+            let matcher = WildcardMaskMatcher(expression: text)
+            return items.filter { matcher.matches($0.name) }
+        }
+        return items.filter {
+            $0.name.localizedCaseInsensitiveContains(text)
+                || ($0.relativeDisplayPath?.localizedCaseInsensitiveContains(text) ?? false)
+        }
+    }
+
+    /// Total Commander only accepts a typed character when something still matches. A wildcard
+    /// mask being typed ("*.sw") counts as matching while it can still grow into a match.
+    public func quickSearchWouldMatch(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return true }
+        let candidates = rawItems.filter { !$0.isParentDirectoryEntry && !$0.fullPath.hasPrefix("dbx-action:") }
+        if !Self.quickFilter(candidates, with: trimmed).isEmpty { return true }
+        if (trimmed.contains("*") || trimmed.contains("?")) && !trimmed.hasSuffix("*") {
+            return !Self.quickFilter(candidates, with: trimmed + "*").isEmpty
+        }
+        return false
+    }
+
     public func applySortAndFilter(
         preferredSelectName: String? = nil,
         fallbackCursorID: String? = nil,
@@ -452,15 +477,7 @@ public final class PanelController: ObservableObject {
 
         let filterText = activeTab.quickFilter.trimmingCharacters(in: .whitespacesAndNewlines)
         if !filterText.isEmpty {
-            if filterText.contains("*") || filterText.contains("?") {
-                let matcher = WildcardMaskMatcher(expression: filterText)
-                regularEntries = regularEntries.filter { matcher.matches($0.name) }
-            } else {
-                regularEntries = regularEntries.filter {
-                    $0.name.localizedCaseInsensitiveContains(filterText)
-                        || ($0.relativeDisplayPath?.localizedCaseInsensitiveContains(filterText) ?? false)
-                }
-            }
+            regularEntries = Self.quickFilter(regularEntries, with: filterText)
         }
 
         let col = activeTab.sortColumn

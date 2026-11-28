@@ -811,7 +811,13 @@ public final class CommanderKeyboardRouter {
                     if !navAndFnKeyCodes.contains(event.keyCode), event.specialKey == nil,
                        let chars = event.characters, !chars.isEmpty,
                        chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
-                        setQuickSearch(panel.activeTab.quickFilter + chars, on: panel)
+                        let next = panel.activeTab.quickFilter + chars
+                        // Like Total Commander: a character that leaves nothing to show is refused.
+                        if panel.quickSearchWouldMatch(next) {
+                            setQuickSearch(next, on: panel)
+                        } else {
+                            NSSound.beep()
+                        }
                         lastHandledTimestamp = event.timestamp
                         return true
                     }
@@ -1200,7 +1206,11 @@ public final class CommanderKeyboardRouter {
         // anywhere (not only at the start).
         if !isCommand && !isControl && !isOption, let chars = event.characters, chars.count == 1,
            let ch = chars.first, Self.startsQuickSearch(ch) {
-            setQuickSearch(chars, on: panel)
+            if panel.quickSearchWouldMatch(chars) {
+                setQuickSearch(chars, on: panel)
+            } else {
+                NSSound.beep()
+            }
             lastHandledTimestamp = event.timestamp
             return true
         }
