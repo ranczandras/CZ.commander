@@ -6,30 +6,44 @@
 
 Click the icon or the link above (or [`CZ.commander.zip`](CZ.commander.zip) in the file list), unzip, move **CZ.commander.app** to `/Applications`. First launch: **System Settings → Privacy & Security → Open Anyway**.
 
-A native macOS dual-pane file manager for Apple Silicon, inspired by the classic Total Commander workflow: two panels, folder tabs, function-key operations and a toolbox of power tools. Built with SwiftUI + AppKit, no third-party dependencies.
+A native macOS dual-pane file manager for Apple Silicon and Intel Macs, inspired by the classic Total Commander workflow: two panels, folder tabs, function-key operations and a toolbox of power tools. Built with SwiftUI + AppKit, no third-party dependencies.
 
 > CZ.commander is an independent project and is not affiliated with or endorsed by Ghisler Software GmbH, the maker of Total Commander.
 
 ---
 
-## Download
+## Install
 
-Unzip it and move **CZ.commander.app** to `/Applications`. (The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.) The app is not notarized by Apple, so the first launch is blocked; open it once, then choose **System Settings → Privacy & Security → Open Anyway**.
+Paste this into **Terminal** (Applications → Utilities → Terminal) and press Return:
 
-CZ.commander checks GitHub for a newer release at every launch and every 6 hours (can be turned off in Settings) and offers **Install & Restart**: it downloads the update, verifies it is signed by the same certificate, replaces the app and relaunches. **CZ.commander → Check for Updates…** checks right away.
+```bash
+curl -fsSL https://raw.githubusercontent.com/ranczandras/CZ.commander/main/install.sh | bash
+```
 
-Requires macOS 14 or later on Apple Silicon.
+It downloads the latest release, installs **CZ.commander.app** into `/Applications` (or `~/Applications` without admin rights) and starts it. Running it again updates or repairs the installation. The script is [install.sh](install.sh).
+
+Why Terminal: the app is not notarized by Apple, so a copy downloaded with a web browser is blocked by Gatekeeper ("damaged" / "cannot be opened"). The installer downloads with `curl` and clears the quarantine flag. If you downloaded [CZ.commander.zip](https://github.com/ranczandras/CZ.commander/releases/latest/download/CZ.commander.zip) with a browser anyway, unzip it, move the app to `/Applications` and run once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/CZ.commander.app
+```
+
+(The green **Code → Download ZIP** button on GitHub gives you the source code, not the app.)
+
+After that, CZ.commander checks GitHub for a newer release at every launch and every 6 hours (can be turned off in Settings) and offers **Install & Restart**: it downloads the update, verifies it is signed by the same certificate, replaces the app and relaunches. **CZ.commander → Check for Updates…** checks right away.
+
+Requires macOS 14 Sonoma or later; runs natively on Apple Silicon and Intel Macs.
 
 ## Build & run
 
-Requirements: macOS 14+, Apple Silicon, Xcode command line tools (Swift 6 toolchain).
+Requirements: macOS 14+, Xcode command line tools (Swift 6 toolchain).
 
 ```bash
 ./build_app.sh
 open /Applications/CZ.commander.app
 ```
 
-`build_app.sh` mirrors the sources to a local build cache (`~/.cache/czcommander-build`, override with `CZ_BUILD_DIR`), builds a release `arm64` binary, renders the app icon, assembles and signs the bundle on the local disk, then installs it to `/Applications` and copies it into the project folder.
+`build_app.sh` mirrors the sources to a local build cache (`~/.cache/czcommander-build`, override with `CZ_BUILD_DIR`), builds a universal release binary (`arm64` + `x86_64`), renders the app icon, assembles and signs the bundle on the local disk, then installs it to `/Applications` and copies it into the project folder.
 
 Run the tests:
 

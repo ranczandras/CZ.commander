@@ -11,7 +11,7 @@ CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
-echo "==> [1/4] Building Release arm64 binary for Apple Silicon (M-Series)..."
+echo "==> [1/4] Building universal Release binary (Apple Silicon + Intel)..."
 cd "$PROJECT_DIR"
 # Build from a local mirror: the project lives on a network/Drive volume whose sync touches
 # file mtimes mid-build ("input file was modified during the build").
@@ -19,10 +19,10 @@ SRC_MIRROR="$BUILD_DIR/src"
 mkdir -p "$SRC_MIRROR"
 rsync -a --delete --exclude ".git" --exclude "*.app" --exclude ".DS_Store" --exclude "docs" "$PROJECT_DIR/" "$SRC_MIRROR/"
 cd "$SRC_MIRROR"
-swift build -c release --arch arm64 --scratch-path "$BUILD_DIR" --disable-sandbox
+swift build -c release --arch arm64 --arch x86_64 --scratch-path "$BUILD_DIR/universal" --disable-sandbox
 cd "$PROJECT_DIR"
 
-BINARY_PATH="$BUILD_DIR/arm64-apple-macosx/release/CZCommander"
+BINARY_PATH="$BUILD_DIR/universal/apple/Products/Release/CZCommander"
 if [ ! -f "$BINARY_PATH" ]; then
     BINARY_PATH="$BUILD_DIR/release/CZCommander"
 fi
