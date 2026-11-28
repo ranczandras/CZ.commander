@@ -28,6 +28,8 @@ final class FileOperationManager: ObservableObject {
         let id = UUID()
         let kind: Kind
         let title: String
+        /// Called on the main thread when the job ends (file promises wait for it).
+        var onFinish: ((Outcome) -> Void)? = nil
     }
 
     enum Outcome: Equatable {
@@ -81,8 +83,8 @@ final class FileOperationManager: ObservableObject {
                     title: "Unpack \(entries.count) item(s) to " + Self.short(destination)), background: false)
     }
 
-    func dropbox(_ kind: Kind, title: String, background: Bool = false) {
-        enqueue(Job(kind: kind, title: title), background: background)
+    func dropbox(_ kind: Kind, title: String, background: Bool = false, onFinish: ((Outcome) -> Void)? = nil) {
+        enqueue(Job(kind: kind, title: title, onFinish: onFinish), background: background)
     }
 
     private func enqueue(_ job: Job, background: Bool) {
@@ -222,6 +224,7 @@ final class FileOperationManager: ObservableObject {
 
     private func finish(_ job: Job, outcome result: Outcome) {
         guard current?.id == job.id else { return }
+        job.onFinish?(result)
         let vm = viewModel ?? CommanderViewModel.shared
         vm.activePanel.activeTab.selectedItemIDs.removeAll()
         DropboxPanelCache.shared.invalidateAll()

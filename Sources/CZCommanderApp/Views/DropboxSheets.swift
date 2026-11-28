@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import CZCommanderCore
 
 // Dropbox account sheet (sign in / out) and "Open shared link" sheet, plus the app-side hooks
@@ -217,6 +218,134 @@ struct DropboxLinkSheetView: View {
                 busy = false
                 message = error.localizedDescription
             }
+        }
+    }
+}
+
+// MARK: - Drag & drop
+
+/// Pasteboard type that carries Dropbox items between the app's own panels.
+let dropboxItemPasteboardType = NSPasteboard.PasteboardType("com.czcommander.dropbox-item")
+
+/// A Dropbox file or folder dragged out of a panel. Finder / the Desktop receive it as a file
+/// promise: when dropped, the item is downloaded there with the progress dialog. The app's own
+/// panels read the Dropbox path from `dropboxItemPasteboardType` instead.
+final class DropboxFilePromiseProvider: NSFilePromiseProvider {
+    let fullPath: String
+
+    init(entry: DropboxEntry) {
+        fullPath = entry.location.fullPath
+        let type = entry.isFolder ? UTType.folder.identifier
+            : (UTType(filenameExtension: (entry.name as NSString).pathExtension)?.identifier ?? UTType.data.identifier)
+        super.init()
+        self.fileType = type
+        self.delegate = DropboxPromiseDelegate.shared
+        self.userInfo = entry
+    }
+
+    override func writableTypes(for pasteboard: NSPasteboard) -> [NSPasteboard.PasteboardType] {
+        super.writableTypes(for: pasteboard) + [dropboxItemPasteboardType]
+    }
+
+    override func pasteboardPropertyList(forType type: NSPasteboard.PasteboardType) -> Any? {
+        type == dropboxItemPasteboardType ? fullPath : super.pasteboardPropertyList(forType: type)
+    }
+}
+
+final class DropboxPromiseDelegate: NSObject, NSFilePromiseProviderDelegate {
+    static let shared = DropboxPromiseDelegate()
+    private let queue: OperationQueue = {
+        let q = OperationQueue()
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, fileNameForType fileType: String) -> String {
+        (provider.userInfo as? DropboxEntry)?.name ?? "Dropbox item"
+    }
+
+    func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue { queue }
+
+    /// Finder chose `url` (its folder + our name): download there and report when done.
+    func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL,
+                             completionHandler: @escaping (Error?) -> Void) {
+        guard let entry = provider.userInfo as? DropboxEntry else {
+            completionHandler(DropboxError("Nothing to download."))
+            return
+        }
+        let folder = url.deletingLastPathComponent().path
+        let done = DispatchSemaphore(value: 0)
+        let box = PromiseResultBox()
+        DispatchQueue.main.async {
+            FileOperationManager.shared.dropbox(
+                .dropboxDownload(items: [entry], destination: folder, deleteAfter: false, openAfter: false),
+                title: "Download \"\(entry.name)\" to " + FileOperationManager.short(folder)
+            ) { outcome in
+                switch outcome {
+                case .failed(let message): box.error = DropboxError(message)
+                case .cancelled: box.error = DropboxError("Cancelled.")
+                default: break
+                }
+                done.signal()
+            }
+        }
+        done.wait()
+        completionHandler(box.error)
+    }
+}
+
+private final class PromiseResultBox: @unchecked Sendable {
+    var error: Error?
+}
+
+extension DropboxIntegration {
+    static func dragPayload(for item: FileItem) -> FileDragPayload? {
+        guard let entry = entry(for: item) else { return nil }
+        let icon = entry.isFolder ? NSWorkspace.shared.icon(for: .folder)
+            : NSWorkspace.shared.icon(for: UTType(filenameExtension: (entry.name as NSString).pathExtension) ?? .data)
+        return FileDragPayload(writer: DropboxFilePromiseProvider(entry: entry), icon: icon)
+    }
+
+    /// Files dropped on a panel: Dropbox items (from the other panel) and / or local files.
+    /// Same as F5: download, upload or a server-side copy, with the progress dialog.
+    static func handleDrop(dropboxPaths: [String], localPaths: [String], onto panel: PanelController,
+                           viewModel: CommanderViewModel) {
+        let entries = dropboxPaths.compactMap { path -> DropboxEntry? in
+            if let e = DropboxPanelCache.shared.entry(forFullPath: path) { return e }
+            guard let loc = DropboxLocation(fullPath: path) else { return nil }
+            return DropboxEntry(name: loc.lastName, isFolder: false, size: 0, modified: nil, location: loc)
+        }
+        if let dest = panel.dropboxLocation {
+            let fromHere = entries.filter { $0.location.parent == dest }
+            let incoming = entries.filter { $0.location.parent != dest }
+            _ = fromHere  // dropped back where it came from
+            if !incoming.isEmpty {
+                guard dest.supportsWrite, incoming.allSatisfy({ $0.location.supportsWrite }) else {
+                    viewModel.statusBannerMessage = "Copy from a shared link into Dropbox is not supported; download it instead."
+                    return
+                }
+                FileOperationManager.shared.dropbox(.dropboxServer(items: incoming, destination: dest, isMove: false),
+                                                    title: "Copy " + FileOperationManager.countText(incoming.map(\.name)) + " to " + dest.displayPath)
+            }
+            if !localPaths.isEmpty {
+                guard dest.supportsWrite else {
+                    viewModel.statusBannerMessage = "This Dropbox place is read-only."
+                    return
+                }
+                FileOperationManager.shared.dropbox(
+                    .dropboxUpload(paths: localPaths, destination: dest, options: FileOperationOptions(overwritePolicy: .ask), trashAfter: false),
+                    title: "Upload " + FileOperationManager.countText(localPaths) + " to " + dest.displayPath)
+            }
+            return
+        }
+        if !entries.isEmpty {
+            FileOperationManager.shared.dropbox(
+                .dropboxDownload(items: entries, destination: panel.currentPath, deleteAfter: false, openAfter: false),
+                title: "Download " + FileOperationManager.countText(entries.map(\.name)) + " to " + FileOperationManager.short(panel.currentPath))
+        }
+        let incoming = localPaths.filter { ($0 as NSString).deletingLastPathComponent != panel.currentPath }
+        if !incoming.isEmpty {
+            FileOperationManager.shared.copy(incoming, to: panel.currentPath)
         }
     }
 }
