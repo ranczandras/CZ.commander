@@ -646,6 +646,7 @@ public final class CommanderAppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidBecomeActive(_ notification: Notification) {
         MacFunctionKeyModeController.shared.enableStandardFunctionKeysForApp()
         CommanderKeyboardRouter.shared.focusKeyCaptureView()
+        UpdateChecker.shared.checkIfStale()
     }
 
     public func applicationWillResignActive(_ notification: Notification) {

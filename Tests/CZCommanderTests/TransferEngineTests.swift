@@ -200,3 +200,44 @@ final class TransferConflictTests: XCTestCase {
         XCTAssertNil(text("dst/d.txt"))
     }
 }
+
+final class MoveAtEndTests: XCTestCase {
+    func testCrossVolumeStyleMoveDeletesOnlyAfterEverythingCopied() throws {
+        // Same volume would be a rename; copyTree with isMove exercises the copy+delete path.
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-mv-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        try fm.createDirectory(atPath: root + "/src/A/sub", withIntermediateDirectories: true)
+        try fm.createDirectory(atPath: root + "/dst", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/src/A/one.txt", contents: Data("1".utf8))
+        fm.createFile(atPath: root + "/src/A/sub/two.txt", contents: Data("2".utf8))
+
+        let reporter = TransferReporter(handler: nil)
+        let ledger = TransferEngine.MoveLedger()
+        _ = try TransferEngine.copyTree(src: root + "/src/A", dst: root + "/dst/A", isMove: true,
+                                        options: FileOperationOptions(), control: nil, reporter: reporter, ledger: ledger)
+        // Nothing removed yet: the sources wait for the end of the whole job.
+        XCTAssertTrue(fm.fileExists(atPath: root + "/src/A/sub/two.txt"))
+        XCTAssertTrue(fm.fileExists(atPath: root + "/dst/A/sub/two.txt"))
+        XCTAssertEqual(ledger.files.count, 2)
+        XCTAssertEqual(ledger.directories.last, root + "/src/A", "folders in post-order, the top one last")
+    }
+
+    func testCancelledMoveKeepsSources() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("czc-mv2-\(UUID().uuidString)").path
+        defer { try? fm.removeItem(atPath: root) }
+        try fm.createDirectory(atPath: root + "/src", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/src/a.txt", contents: Data("a".utf8))
+        fm.createFile(atPath: root + "/src/b.txt", contents: Data("b".utf8))
+        let control = TransferControl()
+        var answered = 0
+        control.conflictResolver = { _ in answered += 1; return .cancel }
+        try fm.createDirectory(atPath: root + "/dst", withIntermediateDirectories: true)
+        fm.createFile(atPath: root + "/dst/b.txt", contents: Data("old".utf8))
+        XCTAssertThrowsError(try TransferEngine.copyOrMove(sources: [root + "/src/a.txt", root + "/src/b.txt"],
+                                                           to: root + "/dst", isMove: true,
+                                                           options: FileOperationOptions(overwritePolicy: .ask), control: control))
+        XCTAssertTrue(fm.fileExists(atPath: root + "/src/b.txt"))
+    }
+}

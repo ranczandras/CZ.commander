@@ -208,7 +208,9 @@ public enum TransferEngine {
         reporter.progress.isScanning = false
         reporter.emit(force: true)
 
-        // 3. Run.
+        // 3. Run. A move across volumes copies everything first; the originals are removed only
+        // after the whole job went through (cancel or an error leaves every source in place).
+        let ledger = MoveLedger()
         for top in tops {
             reporter.progress.currentFileName = (top.src as NSString).lastPathComponent
             reporter.progress.currentSourcePath = top.src
@@ -221,9 +223,20 @@ public enum TransferEngine {
                 continue
             }
             if let final = try copyTree(src: top.src, dst: top.dst, isMove: isMove, options: options,
-                                        control: control, reporter: reporter) {
+                                        control: control, reporter: reporter, ledger: ledger) {
                 created.append(final)
             }
+        }
+        if isMove && (!ledger.files.isEmpty || !ledger.directories.isEmpty) {
+            reporter.progress.currentFileName = "Removing the originals…"
+            reporter.progress.currentSourcePath = ""
+            reporter.progress.currentDestinationPath = ""
+            reporter.emit(force: true)
+            for file in ledger.files {
+                try FileSystemEngine.removeExistingUnlockingIfNeeded(atPath: file)
+            }
+            // Deepest first; a folder that still holds skipped files stays.
+            for dir in ledger.directories { rmdir(dir) }
         }
         reporter.progress.currentFileName = ""
         reporter.progress.currentSourcePath = ""
@@ -281,9 +294,17 @@ public enum TransferEngine {
 
     // MARK: Copy
 
+    /// Sources of a cross-volume move that were copied completely, removed at the very end.
+    final class MoveLedger {
+        var files: [String] = []
+        /// In post-order (children before their folder).
+        var directories: [String] = []
+    }
+
     /// Copies one item (recursively). Returns its final destination path or nil when skipped.
     static func copyTree(src: String, dst: String, isMove: Bool, options: FileOperationOptions,
-                         control: TransferControl?, reporter: TransferReporter) throws -> String? {
+                         control: TransferControl?, reporter: TransferReporter,
+                         ledger: MoveLedger = MoveLedger()) throws -> String? {
         // Show what comes next even while paused.
         reporter.progress.currentFileName = (src as NSString).lastPathComponent
         reporter.progress.currentSourcePath = src
@@ -319,18 +340,16 @@ public enum TransferEngine {
             for child in children {
                 _ = try copyTree(src: (src as NSString).appendingPathComponent(child),
                                  dst: (target as NSString).appendingPathComponent(child),
-                                 isMove: isMove, options: options, control: control, reporter: reporter)
+                                 isMove: isMove, options: options, control: control, reporter: reporter, ledger: ledger)
             }
             // Folder metadata last, so the copied children do not change its dates again.
             _ = copyfile(src, target, nil, copyfile_flags_t(cfMetadata))
-            if isMove { rmdir(src) }  // only succeeds when everything inside was moved
+            if isMove { ledger.directories.append(src) }
             return target
         }
 
         try copyFile(src: src, dst: target, size: Int64(st.st_size), options: options, control: control, reporter: reporter)
-        if isMove {
-            try FileSystemEngine.removeExistingUnlockingIfNeeded(atPath: src)
-        }
+        if isMove { ledger.files.append(src) }
         return target
     }
 
