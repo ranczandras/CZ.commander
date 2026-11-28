@@ -56,7 +56,11 @@ final class AppUninstallerSession: ObservableObject {
         let movedCount: Int
         let movedBytes: Int64
         let failures: [String]
+        /// macOS refused: CZ.commander needs the "App Management" permission.
+        var needsAppManagement = false
     }
+
+    static let appManagementSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles")!
 
     @Published private(set) var apps: [InstalledApp] = []
     @Published private(set) var appSizes: [String: Int64] = [:]
@@ -221,10 +225,12 @@ final class AppUninstallerSession: ObservableObject {
             let urls = [URL(fileURLWithPath: app.path)] + leftovers.map { URL(fileURLWithPath: $0.path) }
             let sizes = Dictionary(uniqueKeysWithValues: [(app.path, plan.bundleSize)] + leftovers.map { ($0.path, $0.sizeBytes) })
             var failures: [String] = []
+            var blocked = false
             do {
                 _ = try await NSWorkspace.shared.recycle(urls)
             } catch {
                 failures.append(error.localizedDescription)
+                blocked = AppUninstallEngine.isPermissionError(error)
             }
             // A partial failure (e.g. password prompt cancelled) still moves the rest.
             var movedPaths = Set<String>()
@@ -236,7 +242,10 @@ final class AppUninstallerSession: ObservableObject {
                 }
             }
             let bytes = movedPaths.reduce(Int64(0)) { $0 + (sizes[$1] ?? 0) }
-            report = Report(appName: app.name, movedCount: movedPaths.count, movedBytes: bytes, failures: failures)
+            // The app bundle itself still there after a permission error: App Management is off.
+            let appStillThere = FileManager.default.fileExists(atPath: app.path)
+            report = Report(appName: app.name, movedCount: movedPaths.count, movedBytes: bytes, failures: failures,
+                            needsAppManagement: blocked && appStillThere)
             phase = .idle
 
             if !FileManager.default.fileExists(atPath: app.path) {
@@ -642,6 +651,12 @@ struct AppUninstallerView: View {
                      ? "\(report.appName): moved \(report.movedCount) item(s), \(size(report.movedBytes)), to the Trash."
                      : "\(report.appName) was not removed.")
                     .font(.system(size: 12, weight: .semibold))
+                if report.needsAppManagement {
+                    Text("macOS blocked it: CZ.commander needs the App Management permission to remove apps. Open System Settings → Privacy & Security → App Management, turn on CZ.commander, then uninstall again.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(report.failures.prefix(6), id: \.self) { f in
                     Text(f)
                         .font(.system(size: 10.5, design: .monospaced))
@@ -651,6 +666,12 @@ struct AppUninstallerView: View {
                 }
             }
             Spacer()
+            if report.needsAppManagement {
+                Button("Open App Management…") {
+                    NSWorkspace.shared.open(AppUninstallerSession.appManagementSettingsURL)
+                }
+                .help("System Settings → Privacy & Security → App Management: turn on CZ.commander, then try again")
+            }
             Button("Dismiss") { session.report = nil }
         }
         .padding(8)

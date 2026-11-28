@@ -174,7 +174,15 @@ final class AppUninstallEngineTests: XCTestCase {
         XCTAssertFalse(AppUninstallEngine.isSafeLeftover("/Library/Application Support/a/b/c", context: ctx))
         XCTAssertTrue(AppUninstallEngine.isSafeLeftover("/Library/LaunchDaemons/com.x.helper.plist", context: ctx))
 
-        XCTAssertNotNil(AppUninstallEngine.protectionReason(path: "/Applications/Safari.app", bundleID: "com.apple.Safari"))
+        XCTAssertNotNil(AppUninstallEngine.protectionReason(path: "/System/Applications/Mail.app", bundleID: "com.apple.mail"))
+        // App Store apps from Apple are removable; only SIP-flagged ones are not.
+        XCTAssertNil(AppUninstallEngine.protectionReason(path: "/Applications/GarageBand.app", bundleID: "com.apple.garageband10"))
+        if FileManager.default.fileExists(atPath: "/Applications/Safari.app") {
+            XCTAssertNotNil(AppUninstallEngine.protectionReason(path: "/Applications/Safari.app", bundleID: "com.apple.Safari"))
+        }
+        XCTAssertTrue(AppUninstallEngine.isPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileWriteNoPermissionError)))
+        XCTAssertTrue(AppUninstallEngine.isPermissionError(NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))))
+        XCTAssertFalse(AppUninstallEngine.isPermissionError(NSError(domain: NSCocoaErrorDomain, code: NSFileNoSuchFileError)))
         XCTAssertNotNil(AppUninstallEngine.protectionReason(path: "/Applications/CZ.commander.app", bundleID: "com.czcommander.macos"))
         XCTAssertNil(AppUninstallEngine.protectionReason(path: "/Applications/Foo.app", bundleID: "com.example.foo"))
     }
