@@ -342,9 +342,13 @@ public struct UnpackFilesSheetView: View {
                 .font(.system(size: 12, design: .monospaced))
 
             Toggle(
-                "Unpack each archive to a separate subdir (name of archive)",
+                "Always unpack into a folder named after the archive",
                 isOn: $unpackEachToSubdir
             )
+            Text("Otherwise: archives with only folders at the top unpack as they are; archives with loose files at the top go into a folder named after the archive.")
+                .font(.system(size: 10.5))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let err = errorMessage {
                 Text(err).foregroundColor(.red).font(.caption)

@@ -342,30 +342,74 @@ public enum ArchiveEngine {
 
     // MARK: - Unpack Archive or Specific Entries (Alt+F9 / F5 / F3 inside Archive)
 
+    /// Unpacks an archive. Whole archives (no `specificEntries`) follow the "smart folder" rule:
+    /// when the top level holds only folders they are unpacked as they are; when it holds
+    /// files too, everything goes into a new folder named after the archive ("photos.zip" ->
+    /// "photos/"). `unpackEachToSeparateSubdir` always uses that folder.
+    /// Returns the folder the content went into.
+    @discardableResult
     public static func unpackArchive(
         archivePath: String,
         toDirectory destinationDirectory: String,
         specificEntries: [String]? = nil,
         unpackEachToSeparateSubdir: Bool = false
-    ) throws {
+    ) throws -> String {
         let fm = FileManager.default
-        let finalDestDir: String
-        if unpackEachToSeparateSubdir {
-            let archiveStem = ((archivePath as NSString).lastPathComponent as NSString).deletingPathExtension
-            finalDestDir = (destinationDirectory as NSString).appendingPathComponent(archiveStem)
-        } else {
-            finalDestDir = destinationDirectory
+        let wholeArchive = specificEntries?.isEmpty ?? true
+        var wrap = unpackEachToSeparateSubdir
+        if !wrap && wholeArchive {
+            let names = (try? listEntryNames(archivePath: archivePath)) ?? []
+            wrap = needsWrapperFolder(entryNames: names)
         }
+        let finalDestDir = wrap
+            ? (destinationDirectory as NSString).appendingPathComponent(archiveStem(archivePath))
+            : destinationDirectory
 
         if !fm.fileExists(atPath: finalDestDir) {
             try fm.createDirectory(atPath: finalDestDir, withIntermediateDirectories: true)
         }
 
-        var args = ["-xf", archivePath, "-C", finalDestDir]
+        // Finder zips carry resource-fork copies in __MACOSX and .DS_Store files: never unpack them.
+        var args = ["-xf", archivePath, "-C", finalDestDir, "--exclude", "__MACOSX", "--exclude", ".DS_Store"]
         if let entries = specificEntries, !entries.isEmpty {
             args.append(contentsOf: entries)
         }
         _ = try runCommand(executable: "/usr/bin/tar", arguments: args)
+        return finalDestDir
+    }
+
+    /// Entry paths as stored in the archive (folders end with "/").
+    public static func listEntryNames(archivePath: String) throws -> [String] {
+        let output = try runCommand(executable: "/usr/bin/tar", arguments: ["-tf", archivePath])
+        return output.components(separatedBy: .newlines).filter { !$0.isEmpty }
+    }
+
+    /// True when the archive's top level holds anything besides folders (a file, a link).
+    /// `__MACOSX`, `.DS_Store` and "./" prefixes are ignored. An empty archive needs no folder.
+    public static func needsWrapperFolder(entryNames: [String]) -> Bool {
+        for raw in entryNames {
+            var path = raw
+            while path.hasPrefix("./") { path.removeFirst(2) }
+            while path.hasPrefix("/") { path.removeFirst() }
+            if path.isEmpty || path == "." { continue }
+            let parts = path.split(separator: "/", omittingEmptySubsequences: true)
+            guard let first = parts.first else { continue }
+            if first == "__MACOSX" || first == ".DS_Store" { continue }
+            // "name" with nothing after it and no trailing slash is a top-level file.
+            if parts.count == 1 && !path.hasSuffix("/") { return true }
+        }
+        return false
+    }
+
+    /// "photos.zip" -> "photos", "backup.tar.gz" -> "backup", "x.tgz" -> "x".
+    public static func archiveStem(_ archivePath: String) -> String {
+        let name = (archivePath as NSString).lastPathComponent
+        let lower = name.lowercased()
+        for ext in [".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz", ".tar.z"] where lower.hasSuffix(ext) {
+            return String(name.dropLast(ext.count))
+        }
+        let stem = (name as NSString).deletingPathExtension
+        return stem.isEmpty ? name : stem
     }
 
     /// Extracts a single archive entry to a temporary file for F3 Lister or F4 Editor viewing
